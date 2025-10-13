@@ -10,7 +10,6 @@ A Python 3D path planning library with visualization using Viser. Implements pat
 - 🎨 **Simple Visualization**: One API works for all planners - just pass the planner object
 - 🌳 **Multiple Algorithms**: RRT (single-tree) and RRT-Connect (bidirectional)
 - 📊 **Detailed Analytics**: Track successful paths and failed collision attempts
-- 🔧 **Configurable**: Extensive configuration options for sampling, collision checking, and planning
 - 📐 **N-Dimensional**: Works with any dimensional state space (2D, 3D, 4D+)
 - 🎯 **Obstacle Avoidance**: Integrated collision detection with boxes and spheres
 
@@ -38,22 +37,22 @@ Run examples:
 ```bash
 
 # Random obstacle map generation example
-uv run python examples/obstacle_map_example.py
+uv run python -m examples/obstacle_map_example.py
 
 # RRT node usage example
-uv run python examples/node_example.py
+uv run python -m examples/node_example.py
 
 # Simple RRT example (no obstacles)
-uv run python examples/rrt_simple_example.py
+uv run python -m examples/rrt_simple_example.py
 
 # RRT with obstacles visualization
-uv run python examples/rrt_example.py
+uv run python -m examples/rrt_example.py
 
 # RRT with mixed obstacles (boxes and spheres)
-uv run python examples/rrt_mixed_obstacles_example.py
+uv run python -m examples/rrt_mixed_obstacles_example.py
 
 # RRT-Connect bidirectional planning with obstacles
-uv run python examples/rrt_connect_example.py
+uv run python -m examples/rrt_connect_example.py
 ```
 
 After running visualization examples, open `http://localhost:8080` in your browser to view the 3D visualization.
