@@ -2,7 +2,7 @@
 
 import viser
 
-from planning.map import Map
+from planning.map import BoxObstacle, Map, SphereObstacle
 
 
 def main() -> None:
@@ -21,7 +21,7 @@ def main() -> None:
     map_env.visualize_bounds(server)
 
     # Generate random obstacles
-    obstacles = map_env.generate_random_obstacles(
+    obstacles = map_env.generate_obstacles(
         server=server,
         num_obstacles=15,
         min_size=0.5,
@@ -29,13 +29,17 @@ def main() -> None:
         seed=42,
         color=(200, 100, 50),
         check_overlap=True,
+        obstacle_type="box",  # Generate only box obstacles for this example
     )
 
     print(f"Number of obstacles generated: {len(obstacles)}")
     print(f"Total obstacles in map: {len(map_env.obstacles)}\n")
     print("Obstacle information:")
     for i, obs in enumerate(obstacles):
-        print(f"  Obstacle {i+1}: position={obs.position}, size={obs.size}")
+        if isinstance(obs, BoxObstacle):
+            print(f"  📦 Box {i+1}: position={obs.position}, size={obs.size}")
+        elif isinstance(obs, SphereObstacle):
+            print(f"  ⚪ Sphere {i+1}: center={obs.center}, radius={obs.radius}")
 
     # Add coordinate frame
     server.scene.add_frame("/axes", wxyz=(1, 0, 0, 0), position=(0, 0, 0), axes_length=2.0)

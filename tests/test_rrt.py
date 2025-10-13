@@ -84,12 +84,12 @@ def test_rrt_connect_simple():
 
 def test_rrt_invalid_start():
     """Test RRT with start in collision."""
-    from planning.map import Obstacle
-    from planning.sampling import CollisionChecker
+    from planning.map import BoxObstacle
+    from planning.sampling import ObstacleCollisionChecker
 
     # Obstacle at start
-    obstacle = Obstacle(position=(0, 0, 0), size=(2, 2, 2))
-    checker = CollisionChecker([obstacle])
+    obstacle = BoxObstacle(position=(0, 0, 0), size=(2, 2, 2))
+    checker = ObstacleCollisionChecker([obstacle])
 
     rrt = RRT(
         start_state=(0, 0, 0),

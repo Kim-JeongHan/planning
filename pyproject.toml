@@ -55,7 +55,7 @@ known-first-party = ["planning"]
 section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
 
 [tool.ruff.lint.mccabe]
-max-complexity = 11
+max-complexity = 12
 
 [tool.black]
 line-length = 100

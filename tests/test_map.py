@@ -55,10 +55,10 @@ def test_is_valid_state_outside_bounds():
 
 def test_add_obstacle():
     """Test adding obstacles to map."""
-    from planning.map import Obstacle
+    from planning.map import BoxObstacle
 
     map_env = Map(size=10)
-    obstacle = Obstacle(position=(1, 1, 1), size=(1, 1, 1))
+    obstacle = BoxObstacle(position=(1, 1, 1), size=(1, 1, 1))
 
     map_env.add_obstacle(obstacle)
 
@@ -68,11 +68,11 @@ def test_add_obstacle():
 
 def test_clear_obstacles():
     """Test clearing obstacles."""
-    from planning.map import Obstacle
+    from planning.map import BoxObstacle
 
     map_env = Map(size=10)
-    map_env.add_obstacle(Obstacle((0, 0, 0), (1, 1, 1)))
-    map_env.add_obstacle(Obstacle((2, 2, 2), (1, 1, 1)))
+    map_env.add_obstacle(BoxObstacle((0, 0, 0), (1, 1, 1)))
+    map_env.add_obstacle(BoxObstacle((2, 2, 2), (1, 1, 1)))
 
     map_env.clear_obstacles()
 

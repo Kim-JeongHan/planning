@@ -1,6 +1,12 @@
 """Map-related module."""
 
 from .map import Map
-from .obstacles import Obstacle, generate_random_obstacles
+from .obstacles import BoxObstacle, Obstacle, ObstacleType, SphereObstacle
 
-__all__ = ["Map", "Obstacle", "generate_random_obstacles"]
+__all__ = [
+    "BoxObstacle",
+    "Map",
+    "Obstacle",
+    "ObstacleType",
+    "SphereObstacle",
+]

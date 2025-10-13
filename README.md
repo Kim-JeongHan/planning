@@ -37,7 +37,10 @@ uv run python examples/node_example.py
 PYTHONPATH=/home/jeonghan/workspace/planning uv run python examples/rrt_simple_example.py
 
 # RRT with obstacles visualization
-PYTHONPATH=/home/jeonghan/workspace/planning uv run python examples/rrt_visualization_example.py
+PYTHONPATH=/home/jeonghan/workspace/planning uv run python examples/rrt_example.py
+
+# RRT with mixed obstacles (boxes and spheres)
+PYTHONPATH=/home/jeonghan/workspace/planning uv run python examples/rrt_mixed_obstacles_example.py
 ```
 
 After running visualization examples, open `http://localhost:8080` in your browser to view the 3D visualization.
@@ -74,7 +77,8 @@ PYTHONPATH=/home/jeonghan/workspace/planning uv run pytest tests/ --cov=planning
 - `examples/obstacle_map_example.py`: Example of generating box obstacles with random sizes in an n×n map
 - `examples/node_example.py`: Example of using RRT tree nodes
 - `examples/rrt_simple_example.py`: Simple RRT and RRT-Connect examples without obstacles
-- `examples/rrt_visualization_example.py`: RRT path planning with obstacles and 3D visualization
+- `examples/rrt_example.py`: RRT path planning with box obstacles and 3D visualization
+- `examples/rrt_mixed_obstacles_example.py`: RRT with mixed obstacle types (boxes and spheres)
 
 ## Modules
 
@@ -90,10 +94,19 @@ Provides map-related functionality.
   - `is_valid_state()`: Check if a state is within map bounds
   - Automatically manages obstacles and boundaries
 
-- **`Obstacle`**: Obstacle class
+- **`Obstacle`**: Abstract base class for obstacles
   - `get_bounds()`: Get obstacle boundaries
   - `contains_point()`: Check point collision
   - `intersects()`: Check obstacle-obstacle collision
+
+- **`BoxObstacle`**: Box-shaped obstacle implementation (AABB)
+  - Concrete implementation of Obstacle abstract class
+  - Axis-aligned bounding box collision detection
+
+- **`SphereObstacle`**: Sphere-shaped obstacle implementation
+  - Concrete implementation of Obstacle abstract class
+  - Spherical collision detection
+  - Supports sphere-to-sphere and sphere-to-box intersection
 
 ### planning.graph
 
@@ -145,10 +158,17 @@ Provides sampling-based path planning algorithms.
 
 #### Collision Checking
 
-- **`CollisionChecker`**: Checks collisions with obstacles
+- **`CollisionChecker`**: Abstract base class for collision checkers
+  - `is_collision_free()`: Check if a state is collision-free
+  - `is_path_collision_free()`: Check if a path is collision-free
+
+- **`ObstacleCollisionChecker`**: Checks collisions with obstacles
+  - Concrete implementation for obstacle-based collision detection
   - Point collision detection
   - Path collision detection with configurable resolution
+
 - **`EmptyCollisionChecker`**: For obstacle-free environments
+  - Always returns True (no collisions)
 
 #### RRT Features
 

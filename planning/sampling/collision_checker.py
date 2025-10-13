@@ -1,15 +1,49 @@
 """Collision checking utilities."""
 
+from abc import ABC, abstractmethod
+
 import numpy as np
 
 from ..map.obstacles import Obstacle
 
 
-class CollisionChecker:
-    """Check for collisions with obstacles."""
+class CollisionChecker(ABC):
+    """Abstract base class for collision checkers."""
+
+    @abstractmethod
+    def is_collision_free(self, state: np.ndarray) -> bool:
+        """Check if a state is collision-free.
+
+        Args:
+            state: The state to check
+
+        Returns:
+            True if collision-free, False otherwise
+        """
+        pass
+
+    @abstractmethod
+    def is_path_collision_free(
+        self, from_state: np.ndarray, to_state: np.ndarray, resolution: float = 0.1
+    ) -> bool:
+        """Check if the straight-line path between two states is collision-free.
+
+        Args:
+            from_state: Starting state
+            to_state: Ending state
+            resolution: Step size for checking intermediate points
+
+        Returns:
+            True if the entire path is collision-free, False otherwise
+        """
+        pass
+
+
+class ObstacleCollisionChecker(CollisionChecker):
+    """Collision checker that checks against a list of obstacles."""
 
     def __init__(self, obstacles: list[Obstacle]) -> None:
-        """Initialize the collision checker.
+        """Initialize the obstacle collision checker.
 
         Args:
             obstacles: List of obstacles to check against
@@ -17,7 +51,7 @@ class CollisionChecker:
         self.obstacles = obstacles
 
     def is_collision_free(self, state: np.ndarray) -> bool:
-        """Check if a state is collision-free.
+        """Check if a state is collision-free (not inside any obstacle).
 
         Args:
             state: The state to check (first 3 dimensions are treated as position)
@@ -67,7 +101,7 @@ class CollisionChecker:
         return True
 
 
-class EmptyCollisionChecker:
+class EmptyCollisionChecker(CollisionChecker):
     """Collision checker for obstacle-free environments."""
 
     def is_collision_free(self, state: np.ndarray) -> bool:

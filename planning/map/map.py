@@ -1,9 +1,16 @@
 """Map class for managing planning environment."""
 
+from typing import Literal
+
 import numpy as np
 import viser
 
-from .obstacles import Obstacle, generate_random_obstacles
+from .obstacles import (
+    Obstacle,
+    _generate_random_box_obstacle,
+    _generate_random_sphere_obstacle,
+    _visualize_obstacle,
+)
 
 
 class Map:
@@ -61,7 +68,7 @@ class Map:
         """
         self.obstacles.extend(obstacles)
 
-    def generate_random_obstacles(
+    def generate_obstacles(
         self,
         server: viser.ViserServer,
         num_obstacles: int,
@@ -72,40 +79,86 @@ class Map:
         seed: int | None = None,
         color: tuple[int, int, int] = (200, 100, 50),
         check_overlap: bool = True,
+        obstacle_type: Literal["box", "sphere", "mixed"] = "box",
     ) -> list[Obstacle]:
         """Generate random obstacles in the map.
 
         Args:
             server: Viser server instance for visualization
             num_obstacles: Number of obstacles to generate
-            min_size: Minimum obstacle size
-            max_size: Maximum obstacle size
+            min_size: Minimum obstacle size (box: width/depth, sphere: radius)
+            max_size: Maximum obstacle size (box: width/depth, sphere: radius)
             min_height: Minimum obstacle height (defaults to z_min)
             max_height: Maximum obstacle height (defaults to z_max)
             seed: Random seed
             color: Obstacle color
             check_overlap: Whether to prevent overlap
+            obstacle_type: Type of obstacles ("box", "sphere", or "mixed")
 
         Returns:
             List of generated obstacles
+
+        Example:
+            >>> map_env = Map(size=20, z_range=(0.5, 2.5))
+            >>> # Generate only box obstacles
+            >>> obstacles = map_env.generate_random_obstacles(server, num_obstacles=10, obstacle_type="box")
+            >>> # Generate only sphere obstacles
+            >>> obstacles = map_env.generate_random_obstacles(server, num_obstacles=10, obstacle_type="sphere")
+            >>> # Generate mixed obstacles (50/50 chance)
+            >>> obstacles = map_env.generate_random_obstacles(server, num_obstacles=10, obstacle_type="mixed")
         """
         if min_height is None:
             min_height = self.z_min
         if max_height is None:
             max_height = self.z_max
 
-        obstacles = generate_random_obstacles(
-            server=server,
-            map_size=self.size,
-            num_obstacles=num_obstacles,
-            min_size=min_size,
-            max_size=max_size,
-            min_height=min_height,
-            max_height=max_height,
-            seed=seed,
-            color=color,
-            check_overlap=check_overlap,
-        )
+        if seed is not None:
+            np.random.seed(seed)
+
+        obstacles: list[Obstacle] = []
+        attempts = 0
+        max_attempts = num_obstacles * 10  # Prevent infinite loop
+
+        while len(obstacles) < num_obstacles and attempts < max_attempts:
+            attempts += 1
+
+            # Decide obstacle type for this iteration
+            new_obstacle: Obstacle
+            if obstacle_type == "mixed":
+                current_type = np.random.choice(["box", "sphere"])
+            else:
+                current_type = obstacle_type
+
+            if current_type == "box":
+                new_obstacle = _generate_random_box_obstacle(
+                    self.size, min_size, max_size, min_height, max_height
+                )
+            else:  # sphere
+                new_obstacle = _generate_random_sphere_obstacle(
+                    self.size, min_size, max_size, min_height, max_height
+                )
+
+            # Check overlap
+            if check_overlap:
+                overlap = False
+                for existing_obstacle in obstacles:
+                    if new_obstacle.intersects(existing_obstacle):
+                        overlap = True
+                        break
+
+                if overlap:
+                    continue
+
+            # Add obstacle
+            obstacles.append(new_obstacle)
+
+            # Visualize in Viser
+            _visualize_obstacle(server, new_obstacle, len(obstacles), color)
+
+        if len(obstacles) < num_obstacles:
+            print(
+                f"Warning: Only {len(obstacles)} out of {num_obstacles} obstacles were generated."
+            )
 
         self.obstacles.extend(obstacles)
         return obstacles
