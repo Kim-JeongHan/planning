@@ -1,7 +1,7 @@
 """Tests for RRT algorithm."""
 
 import numpy as np
-from planning.sampling import RRT, RRTConnect
+from planning.sampling import RRT, RRTConnect, RRTConfig, RRTConnectConfig
 
 
 def test_rrt_simple_2d():
@@ -14,10 +14,12 @@ def test_rrt_simple_2d():
         start_state=start,
         goal_state=goal,
         bounds=bounds,
-        max_iterations=1000,
-        step_size=0.5,
-        goal_tolerance=0.5,
-        seed=42
+        config=RRTConfig(
+            max_iterations=1000,
+            step_size=0.5,
+            goal_tolerance=0.5,
+            seed=42
+        )
     )
     
     path = rrt.plan()
@@ -37,10 +39,12 @@ def test_rrt_reaches_goal():
         start_state=start,
         goal_state=goal,
         bounds=bounds,
-        max_iterations=2000,
-        step_size=0.5,
-        goal_tolerance=0.5,
-        seed=42
+        config=RRTConfig(
+            max_iterations=2000,
+            step_size=0.5,
+            goal_tolerance=0.5,
+            seed=42
+        )
     )
     
     path = rrt.plan()
@@ -57,8 +61,7 @@ def test_rrt_stats():
         start_state=(0, 0),
         goal_state=(5, 5),
         bounds=[(-1, 6), (-1, 6)],
-        max_iterations=500,
-        seed=42
+        config=RRTConfig(max_iterations=500, seed=42)
     )
     
     path = rrt.plan()
@@ -80,9 +83,11 @@ def test_rrt_connect_simple():
         start_state=start,
         goal_state=goal,
         bounds=bounds,
-        max_iterations=1000,
-        step_size=0.5,
-        seed=42
+        config=RRTConnectConfig(
+            max_iterations=1000,
+            step_size=0.5,
+            seed=42
+        )
     )
     
     path = rrt_connect.plan()
@@ -104,7 +109,7 @@ def test_rrt_invalid_start():
         goal_state=(10, 10, 5),
         bounds=[(-5, 15), (-5, 15), (-5, 10)],
         collision_checker=checker,
-        max_iterations=100
+        config=RRTConfig(max_iterations=100)
     )
     
     path = rrt.plan()
@@ -118,8 +123,7 @@ def test_rrt_tree_edges():
         start_state=(0, 0),
         goal_state=(5, 5),
         bounds=[(-1, 6), (-1, 6)],
-        max_iterations=100,
-        seed=42
+        config=RRTConfig(max_iterations=100, seed=42)
     )
     
     path = rrt.plan()

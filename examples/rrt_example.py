@@ -2,7 +2,7 @@
 
 import numpy as np
 import viser
-from planning.sampling import RRT, CollisionChecker
+from planning.sampling import RRT, CollisionChecker, RRTConfig
 from planning.map import Map
 from planning.visualization import RRTVisualizer
 
@@ -56,11 +56,7 @@ def main(seed : int = 42):
         goal_state=goal_state,
         bounds=map_env.get_bounds(),  # Use map bounds
         collision_checker=collision_checker,
-        max_iterations=5000,
-        step_size=0.2,
-        goal_tolerance=0.4,
-        goal_bias=0.1,
-        seed=seed
+        config=RRTConfig(seed=seed)
     )
     
     print("Planning with RRT...")

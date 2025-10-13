@@ -12,10 +12,10 @@ from dataclasses import dataclass
 
 @dataclass
 class RRTConfig:
-    max_iterations: int = 5000,
-    step_size: float = 0.5,
-    goal_tolerance: float = 0.5,
-    goal_bias: float = 0.05,
+    max_iterations: int = 5000
+    step_size: float = 0.5
+    goal_tolerance: float = 0.5
+    goal_bias: float = 0.05
     seed: Optional[int] = None
 
 class RRT:
