@@ -89,7 +89,7 @@ Provides map-related functionality.
   - `add_obstacle()`: Add obstacles to the map
   - `is_valid_state()`: Check if a state is within map bounds
   - Automatically manages obstacles and boundaries
-  
+
 - **`Obstacle`**: Obstacle class
   - `get_bounds()`: Get obstacle boundaries
   - `contains_point()`: Check point collision
@@ -132,7 +132,7 @@ Provides sampling-based path planning algorithms.
   - Goal-biased sampling
   - Configurable step size and goal tolerance
   - Collision checking support
-  
+
 - **`RRTConnect`**: Bidirectional RRT
   - Grows two trees from start and goal
   - Faster convergence than standard RRT
@@ -182,4 +182,3 @@ Provides simple visualization utilities for path planning algorithms.
 ## Author
 
 - Kim-JeongHan (Kim-JeongHan@naver.com)
-

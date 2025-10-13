@@ -1,0 +1,69 @@
+# Pre-commit hooks configuration
+# 3단계 코드 품질 관리 시스템
+# 1. Ruff: 린팅 (isort, autoflake, pyupgrade 포함)
+# 2. Black: 코드 포맷팅
+# 3. Mypy: 타입 체킹
+
+repos:
+  # ============================================================================
+  # Stage 1: Ruff - 코드 린팅 및 자동 수정
+  # ============================================================================
+  # 역할: 팀 내 정해놓은 규칙으로 코드 린팅
+  # 기능:
+  #   - isort: import 문 자동 정렬
+  #   - autoflake: 사용하지 않는 import, 변수 제거
+  #   - pyupgrade: 최신 Python 문법으로 자동 업그레이드
+  #   - flake8-bugbear: 잠재적 버그 탐지
+  #   - flake8-simplify: 코드 단순화 제안
+  #   - 보안 검사, 복잡도 체크 등
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+
+  # ============================================================================
+  # Stage 2: Black - 코드 포맷팅
+  # ============================================================================
+  # 역할: 동일한 코드 스타일로 포맷하여 일관성 유지 및 가독성 향상
+  # 기능:
+  #   - 일관된 들여쓰기, 줄바꿈, 공백 처리
+  #   - 문자열 따옴표 통일
+  #   - 100자 line-length 적용
+  - repo: https://github.com/psf/black
+    rev: 24.10.0
+    hooks:
+      - id: black
+        language_version: python3
+
+  # ============================================================================
+  # Stage 3: Mypy - 타입 체킹
+  # ============================================================================
+  # 역할: 데이터 타입의 일관성 유지로 원활한 리팩토링 지원
+  # 기능:
+  #   - 함수/변수의 타입 검증
+  #   - 타입 힌트 누락 감지
+  #   - 런타임 이전에 타입 오류 발견
+  #   - 코드 완성도 향상
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.13.0
+    hooks:
+      - id: mypy
+        additional_dependencies: [numpy, types-requests]
+        exclude: ^tests/
+
+  # ============================================================================
+  # Additional Checks - 추가 품질 검사
+  # ============================================================================
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-case-conflict      # 대소문자 충돌 확인
+      - id: check-merge-conflict     # 병합 충돌 확인
+      - id: check-yaml               # YAML 문법 검사
+      - id: check-toml               # TOML 문법 검사
+      - id: check-added-large-files  # 대용량 파일 체크
+        args: [--maxkb=1000]
+      - id: trailing-whitespace      # 후행 공백 제거
+      - id: end-of-file-fixer        # 파일 끝 개행 추가
+      - id: check-ast                # Python AST 검사
