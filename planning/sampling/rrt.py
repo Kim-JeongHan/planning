@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from ..graph.node import Node, get_nearest_node, steer
-from .collision_checker import CollisionChecker, EmptyCollisionChecker
+from .collision_checker import CollisionChecker, EmptyCollisionChecker, ObstacleCollisionChecker
 from .sampler import GoalBiasedSampler, Sampler, UniformSampler
 
 
@@ -51,7 +51,7 @@ class RRT:
         self.seed = config.seed
 
         # Collision checker
-        self.collision_checker: CollisionChecker | EmptyCollisionChecker
+        self.collision_checker: CollisionChecker | ObstacleCollisionChecker | EmptyCollisionChecker
         if collision_checker is None:
             self.collision_checker = EmptyCollisionChecker()
         else:
