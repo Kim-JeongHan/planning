@@ -5,7 +5,18 @@ from typing import List, Tuple, Optional, Union
 from ..graph.node import Node, steer, get_nearest_node
 from .sampler import UniformSampler, GoalBiasedSampler
 from .collision_checker import CollisionChecker, EmptyCollisionChecker
+from dataclasses import dataclass
 
+
+
+
+@dataclass
+class RRTConfig:
+    max_iterations: int = 5000,
+    step_size: float = 0.5,
+    goal_tolerance: float = 0.5,
+    goal_bias: float = 0.05,
+    seed: Optional[int] = None
 
 class RRT:
     """RRT (Rapidly-exploring Random Tree) path planner."""
@@ -16,11 +27,7 @@ class RRT:
         goal_state: Union[Tuple[float, ...], np.ndarray, List[float]],
         bounds: List[Tuple[float, float]],
         collision_checker: Optional[CollisionChecker] = None,
-        max_iterations: int = 5000,
-        step_size: float = 0.5,
-        goal_tolerance: float = 0.5,
-        goal_bias: float = 0.05,
-        seed: Optional[int] = None
+        config: RRTConfig = RRTConfig()
     ):
         """Initialize the RRT planner.
         
@@ -38,10 +45,10 @@ class RRT:
         self.start_state = np.array(start_state)
         self.goal_state = np.array(goal_state)
         self.bounds = bounds
-        self.max_iterations = max_iterations
-        self.step_size = step_size
-        self.goal_tolerance = goal_tolerance
-        self.seed = seed
+        self.max_iterations = config.max_iterations
+        self.step_size = config.step_size
+        self.goal_tolerance = config.goal_tolerance
+        self.seed = config.seed
         
         # Collision checker
         if collision_checker is None:
@@ -53,8 +60,8 @@ class RRT:
         self.sampler = GoalBiasedSampler(
             bounds=bounds,
             goal_state=self.goal_state,
-            goal_bias=goal_bias,
-            seed=seed
+            goal_bias=config.goal_bias,
+            seed=config.seed
         )
         
         # Tree
@@ -170,6 +177,12 @@ class RRT:
         }
 
 
+@dataclass
+class RRTConnectConfig:
+    max_iterations: int = 5000,
+    step_size: float = 0.5,
+    seed: Optional[int] = None
+
 class RRTConnect:
     """RRT-Connect algorithm (bidirectional RRT)."""
     
@@ -179,9 +192,7 @@ class RRTConnect:
         goal_state: Union[Tuple[float, ...], np.ndarray, List[float]],
         bounds: List[Tuple[float, float]],
         collision_checker: Optional[CollisionChecker] = None,
-        max_iterations: int = 5000,
-        step_size: float = 0.5,
-        seed: Optional[int] = None
+        config: RRTConnectConfig = RRTConnectConfig()
     ):
         """Initialize the RRT-Connect planner.
         
@@ -197,9 +208,9 @@ class RRTConnect:
         self.start_state = np.array(start_state)
         self.goal_state = np.array(goal_state)
         self.bounds = bounds
-        self.max_iterations = max_iterations
-        self.step_size = step_size
-        self.seed = seed
+        self.max_iterations = config.max_iterations
+        self.step_size = config.step_size
+        self.seed = config.seed
         
         # Collision checker
         if collision_checker is None:
@@ -208,7 +219,7 @@ class RRTConnect:
             self.collision_checker = collision_checker
         
         # Sampler
-        self.sampler = UniformSampler(bounds=bounds, seed=seed)
+        self.sampler = UniformSampler(bounds=bounds, seed=config.seed)
         
         # Trees
         self.start_nodes: List[Node] = []
