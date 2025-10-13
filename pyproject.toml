@@ -3,7 +3,15 @@ name = "planning"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
+authors = [
+    { name = "Kim-JeongHan", email = "Kim-JeongHan@naver.com" }
+]
 requires-python = ">=3.10"
 dependencies = [
     "viser>=1.0.13",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
 ]
