@@ -34,10 +34,7 @@ All visualization examples can be viewed at `http://localhost:8080` after runnin
 
 Basic single-tree RRT algorithm with obstacle avoidance.
 
-<div align="center">
-  <img src="docs/images/rrt_example.png" alt="RRT Example" width="600"/>
-  <!-- Or use GIF: <img src="docs/images/rrt_example.gif" alt="RRT Example" width="600"/> -->
-</div>
+![RRT Example](docs/images/rrt_example.png)
 
 **Features:**
 - Single-tree exploration from start to goal
@@ -56,10 +53,7 @@ uv run python examples/rrt_example.py
 
 Faster convergence using dual-tree bidirectional search.
 
-<div align="center">
-  <img src="docs/images/rrt_connect_example.png" alt="RRT-Connect Example" width="600"/>
-  <!-- Or use GIF: <img src="docs/images/rrt_connect_example.gif" alt="RRT-Connect Example" width="600"/> -->
-</div>
+![RRT-Connect Example](docs/images/rrt_connect_example.png)
 
 **Features:**
 - Bidirectional search (start tree + goal tree)
@@ -79,9 +73,7 @@ uv run python examples/rrt_connect_example.py
 
 RRT with heterogeneous obstacle types.
 
-<div align="center">
-  <img src="docs/images/rrt_mixed_obstacles_example.png" alt="Mixed Obstacles Example" width="600"/>
-</div>
+![Mixed Obstacles Example](docs/images/rrt_mixed_obstacles_example.png)
 
 **Features:**
 - Box obstacles (rectangular prisms)
@@ -99,9 +91,7 @@ uv run python examples/rrt_mixed_obstacles_example.py
 
 Random procedural obstacle generation for testing.
 
-<div align="center">
-  <img src="docs/images/obstacle_map_example.png" alt="Obstacle Map Example" width="600"/>
-</div>
+![Obstacle Map Example](docs/images/obstacle_map_example.png)
 
 **Features:**
 - Random obstacle placement
@@ -114,14 +104,6 @@ uv run python examples/obstacle_map_example.py
 ```
 
 ---
-
-### 5. 3D Curve Drawing
-
-Basic 3D curve visualization using Viser.
-
-<div align="center">
-  <img src="docs/images/curve_example.png" alt="Curve Example" width="600"/>
-</div>
 
 **Run:**
 ```bash
@@ -184,9 +166,6 @@ This library follows a **clean, extensible architecture** based on object-orient
 
 ## Quick Start
 
-<div align="center">
-  <img src="docs/images/quick_start_demo.png" alt="Quick Start Demo" width="700"/>
-</div>
 
 ```python
 import numpy as np
