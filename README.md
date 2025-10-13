@@ -34,7 +34,9 @@ All visualization examples can be viewed at `http://localhost:8080` after runnin
 
 Basic single-tree RRT algorithm with obstacle avoidance.
 
-![RRT Example](docs/images/rrt_example.png)
+<p align="center">
+  <img src="docs/images/rrt_example.png" alt="RRT Example" width="100%">
+</p>
 
 **Features:**
 - Single-tree exploration from start to goal
