@@ -30,13 +30,29 @@ uv sync --extra dev
 
 All visualization examples can be viewed at `http://localhost:8080` after running.
 
-### 1. RRT (Rapidly-exploring Random Tree)
+### 1. Obstacle Map Generation
+
+Random procedural obstacle generation for testing.
+
+<img src="docs/images/obstacle_map_example.png" alt="Obstacle Map Example" width="100%" height="100%"/>
+
+**Features:**
+- Random obstacle placement
+- Configurable obstacle density
+- Visualized boundaries
+
+**Run:**
+```bash
+uv run python examples/obstacle_map_example.py
+```
+
+---
+
+### 2. RRT (Rapidly-exploring Random Tree)
 
 Basic single-tree RRT algorithm with obstacle avoidance.
 
-<p align="center">
-  <img src="docs/images/rrt_example.png" alt="RRT Example" width="100%">
-</p>
+<img src="docs/images/rrt_example.png" alt="RRT Example" width="100%" height="100%"/>
 
 **Features:**
 - Single-tree exploration from start to goal
@@ -51,11 +67,29 @@ uv run python examples/rrt_example.py
 
 ---
 
-### 2. RRT-Connect (Bidirectional RRT)
+### 3. Mixed Obstacles (Boxes + Spheres)
+
+RRT with heterogeneous obstacle types.
+
+<img src="docs/images/rrt_mixed_obstacles_example.png" alt="Mixed Obstacles Example" width="100%" height="100%"/>
+
+**Features:**
+- Box obstacles (rectangular prisms)
+- Sphere obstacles (3D balls)
+- Combined collision checking
+
+**Run:**
+```bash
+uv run python examples/rrt_mixed_obstacles_example.py
+```
+
+---
+
+### 4. RRT-Connect (Bidirectional RRT)
 
 Faster convergence using dual-tree bidirectional search.
 
-![RRT-Connect Example](docs/images/rrt_connect_example.png)
+<img src="docs/images/rrt_connect_example.png" alt="RRT-Connect Example" width="100%" height="100%"/>
 
 **Features:**
 - Bidirectional search (start tree + goal tree)
@@ -70,47 +104,6 @@ uv run python examples/rrt_connect_example.py
 ```
 
 ---
-
-### 3. Mixed Obstacles (Boxes + Spheres)
-
-RRT with heterogeneous obstacle types.
-
-![Mixed Obstacles Example](docs/images/rrt_mixed_obstacles_example.png)
-
-**Features:**
-- Box obstacles (rectangular prisms)
-- Sphere obstacles (3D balls)
-- Combined collision checking
-
-**Run:**
-```bash
-uv run python examples/rrt_mixed_obstacles_example.py
-```
-
----
-
-### 4. Obstacle Map Generation
-
-Random procedural obstacle generation for testing.
-
-![Obstacle Map Example](docs/images/obstacle_map_example.png)
-
-**Features:**
-- Random obstacle placement
-- Configurable obstacle density
-- Visualized boundaries
-
-**Run:**
-```bash
-uv run python examples/obstacle_map_example.py
-```
-
----
-
-**Run:**
-```bash
-uv run python examples/curve_example.py
-```
 
 ## Testing
 
