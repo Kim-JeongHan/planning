@@ -3,7 +3,7 @@
 import numpy as np
 import viser
 
-from planning.map import Map
+from planning.map import BoxObstacle, Map, SphereObstacle
 from planning.sampling import RRT, ObstacleCollisionChecker, RRTConfig
 from planning.visualization import RRTVisualizer
 
@@ -37,9 +37,6 @@ def main(seed: int = 42) -> None:
         obstacle_type="mixed",  # <-- Mixed obstacles!
     )
     print(f"Generated {len(obstacles)} obstacles\n")
-
-    # Count obstacle types
-    from planning.map import BoxObstacle, SphereObstacle
 
     box_count = sum(1 for obs in obstacles if isinstance(obs, BoxObstacle))
     sphere_count = sum(1 for obs in obstacles if isinstance(obs, SphereObstacle))
@@ -82,14 +79,11 @@ def main(seed: int = 42) -> None:
     if path is not None:
         print(f"\n✅ Path found with {len(path)} waypoints!")
         print(f"Path length: {rrt.get_path_length():.2f}")
-        print(f"Total nodes explored: {len(rrt.nodes)}\n")
+        print(f"Total nodes explored: {len(rrt.get_all_nodes())}\n")
 
         # Visualize all paths (success: blue, failure: red)
         visualizer.visualize_branches(
-            nodes=rrt.nodes,
-            goal_node=rrt.goal_node,
-            min_depth=1,
-            max_branches=100,
+            rrt,  # Pass the planner directly
             success_color=(100, 150, 255),  # Blue
             failure_color=(255, 100, 100),  # Red
             line_width=1.5,
@@ -113,9 +107,6 @@ def main(seed: int = 42) -> None:
     print("\nStatistics:")
     for key, value in stats.items():
         print(f"  {key}: {value}")
-
-    # Add coordinate frame
-    visualizer.add_coordinate_frame(position=(0, 0, 0), axes_length=2.0)
 
     # Keep server running
     print("\nPress Ctrl+C to exit.")

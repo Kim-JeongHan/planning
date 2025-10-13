@@ -74,14 +74,12 @@ def main(seed: int = 42) -> None:
     if path is not None:
         print(f"\nPath found with {len(path)} waypoints!")
         print(f"Path length: {rrt.get_path_length():.2f}")
-        print(f"Total nodes explored: {len(rrt.nodes)}\n")
+        print(f"Total nodes explored: {len(rrt.get_all_nodes())}\n")
 
         # Visualize all paths (success: blue, failure: red)
+        # Now we can pass the planner directly!
         visualizer.visualize_branches(
-            nodes=rrt.nodes,
-            goal_node=rrt.goal_node,
-            min_depth=1,
-            max_branches=100,
+            rrt,  # Pass the planner directly
             success_color=(100, 150, 255),  # Blue
             failure_color=(255, 100, 100),  # Red
             line_width=1.5,
@@ -103,9 +101,6 @@ def main(seed: int = 42) -> None:
     print("\nStatistics:")
     for key, value in stats.items():
         print(f"  {key}: {value}")
-
-    # Add coordinate frame
-    visualizer.add_coordinate_frame(position=(0, 0, 0), axes_length=2.0)
 
     # Keep server running
     print("\nPress Ctrl+C to exit.")

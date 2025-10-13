@@ -118,3 +118,60 @@ def test_rrt_tree_edges():
 
     assert len(edges) > 0
     assert all(len(edge) == 2 for edge in edges)  # Each edge is (parent, child)
+
+
+def test_rrt_connect_with_obstacles():
+    """Test RRT-Connect with obstacles in the middle."""
+    from planning.map import BoxObstacle
+    from planning.sampling import ObstacleCollisionChecker
+
+    # Create obstacle in the middle
+    obstacle = BoxObstacle(position=(5, 5, 2.5), size=(2, 2, 2))
+    checker = ObstacleCollisionChecker([obstacle])
+
+    start = (0, 0, 0)
+    goal = (10, 10, 5)
+    bounds = [(-2, 12), (-2, 12), (-2, 10)]
+
+    rrt_connect = RRTConnect(
+        start_state=start,
+        goal_state=goal,
+        bounds=bounds,
+        collision_checker=checker,
+        config=RRTConnectConfig(max_iterations=2000, seed=42),
+    )
+
+    path = rrt_connect.plan()
+
+    # Should find a path around the obstacle or fail gracefully
+    if path is not None:
+        # Verify path doesn't go through obstacle
+        for node in path:
+            assert not obstacle.contains_point(tuple(node.state[:3]))
+        # Verify path connects start to goal
+        assert np.allclose(path[0].state, start)
+        # Last node should be close to goal (within step_size of goal tree root)
+        distance_to_goal = np.linalg.norm(path[-1].state - np.array(goal))
+        assert distance_to_goal <= 5.0  # Reasonable distance for connected path
+
+
+def test_rrt_connect_collision_start():
+    """Test RRT-Connect with start state in collision."""
+    from planning.map import BoxObstacle
+    from planning.sampling import ObstacleCollisionChecker
+
+    # Obstacle at start
+    obstacle = BoxObstacle(position=(0, 0, 0), size=(2, 2, 2))
+    checker = ObstacleCollisionChecker([obstacle])
+
+    rrt_connect = RRTConnect(
+        start_state=(0, 0, 0),
+        goal_state=(10, 10, 5),
+        bounds=[(-5, 15), (-5, 15), (-5, 10)],
+        collision_checker=checker,
+        config=RRTConnectConfig(max_iterations=100),
+    )
+
+    path = rrt_connect.plan()
+
+    assert path is None  # Should fail immediately

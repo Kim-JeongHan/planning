@@ -1,9 +1,14 @@
 """Visualization utilities for RRT algorithms."""
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import viser
 
 from ..graph.node import Node
+
+if TYPE_CHECKING:
+    from ..sampling.rrt import RRTBase
 
 
 class RRTVisualizer:
@@ -54,8 +59,7 @@ class RRTVisualizer:
 
     def visualize_branches(
         self,
-        nodes: list[Node],
-        goal_node: Node | None = None,
+        planner: "RRTBase",
         success_color: tuple[int, int, int] = (100, 150, 255),
         failure_color: tuple[int, int, int] = (255, 100, 100),
         line_width: float = 1.5,
@@ -64,13 +68,16 @@ class RRTVisualizer:
         """Visualize branches as success (blue) or failure (red) paths.
 
         Args:
-            nodes: All nodes in the tree
-            goal_node: The node that reached the goal (for identifying success path)
+            planner: RRTBase planner instance (RRT or RRTConnect)
             success_color: RGB color for the successful path (blue)
             failure_color: RGB color for failed paths (red)
             line_width: Width of the branch lines
             prefix: Prefix for scene node names
         """
+        # Get nodes and goal_node from planner
+        nodes = planner.get_all_nodes()
+        goal_node = planner.get_goal_node()
+
         # Find all leaf nodes
         leaf_nodes = [node for node in nodes if node.is_leaf()]
 
@@ -87,8 +94,8 @@ class RRTVisualizer:
                 current = current.parent
 
         # Categorize leaf nodes
-        success_leaves = []
-        failure_leaves = []
+        success_leaves: list[Node] = []
+        failure_leaves: list[Node] = []
 
         for leaf in leaf_nodes:
             if leaf in success_path_nodes:
@@ -123,7 +130,7 @@ class RRTVisualizer:
                 points = np.array([parent_pos, child_pos])
                 self.server.scene.add_spline_catmull_rom(
                     f"{prefix}/failure_{branch_idx}_segment_{i}",
-                    positions=points,
+                    points=points,
                     color=failure_color,
                     line_width=line_width,
                 )
@@ -157,7 +164,7 @@ class RRTVisualizer:
                 points = np.array([parent_pos, child_pos])
                 self.server.scene.add_spline_catmull_rom(
                     f"{prefix}/success_{branch_idx}_segment_{i}",
-                    positions=points,
+                    points=points,
                     color=success_color,
                     line_width=line_width,
                 )
