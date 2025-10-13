@@ -1,6 +1,8 @@
 # Planning
 
-A Python 3D path planning library with visualization using Viser. Implements RRT-based algorithms with a unified architecture for easy extension and consistent visualization.
+
+A Python 3D path planning library with visualization using Viser. Implements pathplanning algorithms with a unified architecture for easy extension and consistent visualization.
+
 
 ## Features
 
@@ -34,8 +36,6 @@ uv run python planning/main.py
 
 Run examples:
 ```bash
-# 3D curve drawing example
-uv run python examples/curve_example.py
 
 # Random obstacle map generation example
 uv run python examples/obstacle_map_example.py
@@ -44,16 +44,16 @@ uv run python examples/obstacle_map_example.py
 uv run python examples/node_example.py
 
 # Simple RRT example (no obstacles)
-PYTHONPATH=/home/jeonghan/workspace/planning uv run python examples/rrt_simple_example.py
+uv run python examples/rrt_simple_example.py
 
 # RRT with obstacles visualization
-PYTHONPATH=/home/jeonghan/workspace/planning uv run python examples/rrt_example.py
+uv run python examples/rrt_example.py
 
 # RRT with mixed obstacles (boxes and spheres)
-PYTHONPATH=/home/jeonghan/workspace/planning uv run python examples/rrt_mixed_obstacles_example.py
+uv run python examples/rrt_mixed_obstacles_example.py
 
 # RRT-Connect bidirectional planning with obstacles
-PYTHONPATH=/home/jeonghan/workspace/planning uv run python examples/rrt_connect_example.py
+uv run python examples/rrt_connect_example.py
 ```
 
 After running visualization examples, open `http://localhost:8080` in your browser to view the 3D visualization.
@@ -66,17 +66,16 @@ Run tests using pytest:
 # Install dev dependencies
 uv sync --extra dev
 
+```
+
+Run tests:
+```bash
 # Run all tests
-PYTHONPATH=/home/jeonghan/workspace/planning uv run pytest tests/
+uv run pytest tests/ -v
 
 # Run specific test file
-PYTHONPATH=/home/jeonghan/workspace/planning uv run pytest tests/test_node.py
+uv run pytest tests/test_rrt.py -v
 
-# Run with verbose output
-PYTHONPATH=/home/jeonghan/workspace/planning uv run pytest tests/ -v
-
-# Run with coverage (if pytest-cov installed)
-PYTHONPATH=/home/jeonghan/workspace/planning uv run pytest tests/ --cov=planning
 ```
 
 ## Architecture
@@ -187,7 +186,6 @@ print(f"Path length: {rrt.get_path_length():.2f}")
 
 ## Examples
 
-- `examples/curve_example.py`: Example of drawing 3D spiral and circular curves
 - `examples/obstacle_map_example.py`: Example of generating box obstacles with random sizes in an n×n map
 - `examples/node_example.py`: Example of using RRT tree nodes
 - `examples/rrt_simple_example.py`: Simple RRT and RRT-Connect examples without obstacles
