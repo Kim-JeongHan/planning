@@ -56,8 +56,6 @@ class RRTVisualizer:
         self,
         nodes: list[Node],
         goal_node: Node | None = None,
-        min_depth: int = 3,
-        max_branches: int = 20,
         success_color: tuple[int, int, int] = (100, 150, 255),
         failure_color: tuple[int, int, int] = (255, 100, 100),
         line_width: float = 1.5,
@@ -68,15 +66,13 @@ class RRTVisualizer:
         Args:
             nodes: All nodes in the tree
             goal_node: The node that reached the goal (for identifying success path)
-            min_depth: Minimum depth for a branch to be visualized
-            max_branches: Maximum number of branches to show
             success_color: RGB color for the successful path (blue)
             failure_color: RGB color for failed paths (red)
             line_width: Width of the branch lines
             prefix: Prefix for scene node names
         """
-        # Find leaf nodes with sufficient depth
-        leaf_nodes = [node for node in nodes if node.is_leaf() and node.get_depth() >= min_depth]
+        # Find all leaf nodes
+        leaf_nodes = [node for node in nodes if node.is_leaf()]
 
         # Sort by depth (longer branches first)
         leaf_nodes.sort(key=lambda n: n.get_depth(), reverse=True)
@@ -99,10 +95,6 @@ class RRTVisualizer:
                 success_leaves.append(leaf)
             else:
                 failure_leaves.append(leaf)
-
-        # Limit number of branches (keep all success, subsample failures)
-        if len(failure_leaves) > max_branches:
-            failure_leaves = failure_leaves[:max_branches]
 
         total_branches = len(success_leaves) + len(failure_leaves)
         print(
@@ -180,20 +172,3 @@ class RRTVisualizer:
                 position=tuple(end_pos),
                 color=success_color,
             )
-
-    def add_coordinate_frame(
-        self,
-        position: tuple[float, float, float] = (0, 0, 0),
-        axes_length: float = 2.0,
-        name: str = "/axes",
-    ) -> None:
-        """Add a coordinate frame to the scene.
-
-        Args:
-            position: Position of the frame
-            axes_length: Length of the axes
-            name: Name of the frame in the scene
-        """
-        self.server.scene.add_frame(
-            name, wxyz=(1, 0, 0, 0), position=position, axes_length=axes_length
-        )
