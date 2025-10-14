@@ -38,7 +38,7 @@ jobs:
 
       - name: Run tests
         run: |
-          uv run pytest tests/ -v
+          PYTHONPATH=${{ github.workspace }} uv run pytest tests/ -v
 
       - name: Check for type errors
         run: |
