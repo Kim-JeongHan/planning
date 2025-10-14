@@ -4,7 +4,7 @@ import numpy as np
 from pydantic import BaseModel, field_validator
 
 from ..collision import CollisionChecker
-from ..graph import Node, get_nearest_node, get_nodes_within_radius
+from ..graph import Node, get_nearest_node
 from .base import RRGBase
 from .sampler import GoalBiasedSampler, Sampler
 
@@ -62,10 +62,9 @@ class RRG(RRGBase):
             max_iterations=config.max_iterations,
             step_size=config.step_size,
             goal_tolerance=config.goal_tolerance,
+            radius_gain=config.radius_gain,
             seed=config.seed,
         )
-
-        self.radius_gain = config.radius_gain
 
         # Sampler
         if config.sampler is GoalBiasedSampler:
@@ -108,8 +107,6 @@ class RRG(RRGBase):
                 self.graph.add_edge(nearest_node, new_node, new_cost)
 
                 neighbor_nodes = self.get_near_node(new_node)
-                if neighbor_nodes is None:
-                    continue
 
                 for neighbor_node in neighbor_nodes:
                     if self.collision_checker.is_path_collision_free(
@@ -126,20 +123,6 @@ class RRG(RRGBase):
                             return self.path
 
         return None
-
-    # def _extend_tree(self, tree: list[Node], target: Node) -> Node | None:
-    def get_near_node(self, target: Node) -> list[Node] | None:
-        """Get the near nodes of the target node."""
-        num_nodes = len(self.graph.nodes)
-
-        if num_nodes <= 1:
-            return []
-
-        radius = min(
-            self.step_size, self.radius_gain * np.power(np.log(num_nodes) / num_nodes, 1 / self.dim)
-        )
-
-        return get_nodes_within_radius(self.graph.nodes, target, radius)
 
     def _is_goal_reached(self, node: Node) -> bool:
         """Check if a node is close enough to the goal.
@@ -172,13 +155,8 @@ class RRG(RRGBase):
         if self.path is None:
             return float("inf")
 
-        distances = [node.distance_to(node.parent) for node in self.path if node.parent is not None]
-
-        if not distances:
-            return float("inf")
-
-        sum_dis = float(np.sum(distances))
-        return float("inf") if np.isinf(sum_dis) else sum_dis
+        distances = [node.distance_to(node.parent) for node in self.path if node.parent]
+        return float(np.sum(distances)) if distances else float("inf")
 
     def get_all_nodes(self) -> list[Node]:
         return self.graph.nodes

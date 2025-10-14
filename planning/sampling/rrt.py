@@ -4,7 +4,7 @@ import numpy as np
 from pydantic import BaseModel, field_validator
 
 from ..collision import CollisionChecker
-from ..graph import Node, get_nearest_node, get_nodes_within_radius, steer
+from ..graph import Node, get_nearest_node, steer
 from .base import RRGBase, RRTBase
 from .sampler import GoalBiasedSampler, Sampler, UniformSampler
 
@@ -481,10 +481,9 @@ class RRTStar(RRGBase):
             max_iterations=config.max_iterations,
             step_size=config.step_size,
             goal_tolerance=config.goal_tolerance,
+            radius_gain=config.radius_gain,
             seed=config.seed,
         )
-
-        self.radius_gain = config.radius_gain
 
         # Sampler
         if config.sampler is GoalBiasedSampler:
@@ -565,20 +564,6 @@ class RRTStar(RRGBase):
                     return self.path
 
         return None
-
-    def get_near_node(self, target: Node) -> list[Node]:
-        """Get the near nodes of the target node."""
-        num_nodes = len(self.graph.nodes)
-
-        if num_nodes <= 1:
-            return []
-
-        radius = min(
-            self.step_size, self.radius_gain * np.power(np.log(num_nodes) / num_nodes, 1 / self.dim)
-        )
-        # radius = self.radius_gain * np.power(np.log(num_nodes) / num_nodes, 1 / self.dim)
-
-        return get_nodes_within_radius(self.graph.nodes, target, radius)
 
     def get_min_cost_node(self, nodes: list[Node], target: Node) -> Node | None:
         min_cost = float("inf")

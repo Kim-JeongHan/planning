@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 
 from ..collision import CollisionChecker, EmptyCollisionChecker, ObstacleCollisionChecker
-from ..graph import Graph, Node
+from ..graph import Graph, Node, get_nodes_within_radius
 from ..search import AStar
 
 
@@ -125,6 +125,7 @@ class RRGBase(RRTBase):
         max_iterations: int = 1000,
         step_size: float = 0.5,
         goal_tolerance: float = 0.5,
+        radius_gain: float = 1.0,
         seed: int | None = None,
     ) -> None:
         """Initialize the RRG base class.
@@ -137,6 +138,7 @@ class RRGBase(RRTBase):
             max_iterations: Maximum number of iterations to run
             step_size: Maximum distance to extend tree at each iteration
             goal_tolerance: Distance threshold to consider goal reached
+            radius_gain: Scaling factor for connection radius
             seed: Random seed for reproducibility
         """
         super().__init__(
@@ -156,3 +158,19 @@ class RRGBase(RRTBase):
 
         # A*
         self.astar = AStar(self.graph)
+
+        # Radius gain
+        self.radius_gain = radius_gain
+
+    def get_near_node(self, target: Node) -> list[Node]:
+        """Get the near nodes of the target node."""
+        num_nodes = len(self.graph.nodes)
+
+        if num_nodes <= 1:
+            return []
+
+        radius = min(
+            self.step_size, self.radius_gain * np.power(np.log(num_nodes) / num_nodes, 1 / self.dim)
+        )
+
+        return get_nodes_within_radius(self.graph.nodes, target, radius)
