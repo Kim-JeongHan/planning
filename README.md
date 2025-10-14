@@ -52,6 +52,8 @@ uv run python examples/obstacle_map_example.py
 
 Basic single-tree RRT algorithm with obstacle avoidance.
 
+**Paper**: [LaValle, S. M. (1998). "Rapidly-exploring random trees: A new tool for path planning"](https://msl.cs.illinois.edu/~lavalle/papers/Lav98c.pdf)
+
 <img src="docs/images/rrt_example.png" alt="RRT Example" width="100%" height="100%"/>
 
 **Features:**
@@ -88,6 +90,8 @@ uv run python examples/rrt_mixed_obstacles_example.py
 ### 4. RRT-Connect (Bidirectional RRT)
 
 Faster convergence using dual-tree bidirectional search.
+
+**Paper**: [Kuffner, J. J., & LaValle, S. M. (2000). "RRT-Connect: An efficient approach to single-query path planning"](https://www.cs.cmu.edu/afs/cs/academic/class/15494-s14/readings/kuffner_icra2000.pdf)
 
 <img src="docs/images/rrt_connect_example.png" alt="RRT-Connect Example" width="100%" height="100%"/>
 
