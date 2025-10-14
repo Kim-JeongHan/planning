@@ -129,34 +129,17 @@ uv run pytest tests/test_rrt.py -v
 
 ```
 
-## Architecture
+## Static Type Checking and Linting
 
-### Design Philosophy
+```bash
+# Install dev dependencies
+uv sync --extra dev
 
-This library follows a **clean, extensible architecture** based on object-oriented principles:
-
-1. **Unified Base Class (`RRTBase`)**:
-   - All RRT variants extend a common abstract base class
-   - Ensures consistent API across different algorithms
-   - Simplifies visualization and statistics collection
-
-2. **Separation of Concerns**:
-   - **Planning**: `planning.sampling` - algorithms and samplers
-   - **Environment**: `planning.map` - obstacles and boundaries
-   - **Graph**: `planning.graph` - tree nodes and relationships
-   - **Visualization**: `planning.visualization` - rendering and display
-
-3. **Pluggable Components**:
-   - Collision checkers: Easy to add custom collision detection
-   - Samplers: Switch between uniform, goal-biased, or custom sampling
-   - Algorithms: Add new RRT variants by extending `RRTBase`
-
-### Key Design Decisions
-
-- **State-based nodes**: Use `node.state` (numpy arrays) for N-dimensional flexibility
-- **Map-centric pattern**: `Map` class is the single source of truth for environment
-- **Unified visualization**: One API (`visualize_branches(planner)`) works for all algorithms
-- **Failed attempt tracking**: RRT-Connect records collision-blocked extensions for analysis
+# Run mypy for static type checking
+uv run mypy planning/ tests/ --ignore-missing-imports
+# Run ruff for linting
+uv run ruff check planning/ tests/
+```
 
 ## Dependencies
 
