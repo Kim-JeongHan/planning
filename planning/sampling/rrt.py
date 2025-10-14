@@ -5,8 +5,8 @@ from abc import ABC, abstractmethod
 import numpy as np
 from pydantic import BaseModel, field_validator
 
+from ..collision import CollisionChecker, EmptyCollisionChecker, ObstacleCollisionChecker
 from ..graph.node import Node, get_nearest_node, steer
-from .collision_checker import CollisionChecker, EmptyCollisionChecker, ObstacleCollisionChecker
 from .sampler import GoalBiasedSampler, Sampler, UniformSampler
 
 

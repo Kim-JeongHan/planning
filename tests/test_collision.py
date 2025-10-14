@@ -2,8 +2,8 @@
 
 import numpy as np
 
+from planning.collision import EmptyCollisionChecker, ObstacleCollisionChecker
 from planning.map import BoxObstacle, SphereObstacle
-from planning.sampling import EmptyCollisionChecker, ObstacleCollisionChecker
 
 
 def test_obstacle_contains_point():
