@@ -22,10 +22,9 @@ class AStar:
         """Return neighbors of a node and edge costs."""
         neighbors = []
         for edge in self.graph.edges:
-            if edge.node1 == node:
-                neighbors.append((edge.node2, edge.cost))
-            elif edge.node2 == node:
-                neighbors.append((edge.node1, edge.cost))
+            if edge.contains_node(node):
+                other_node = edge.get_other_node(node)
+                neighbors.append((other_node, edge.cost))
         return neighbors
 
     def search(self, start: Node, goal: Node) -> list[Node]:

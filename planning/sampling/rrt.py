@@ -1,13 +1,18 @@
 """RRT (Rapidly-exploring Random Tree) algorithm implementation."""
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
 import numpy as np
 from pydantic import BaseModel, field_validator
 
 from ..collision import CollisionChecker, EmptyCollisionChecker, ObstacleCollisionChecker
-from ..graph.node import Node, get_nearest_node, steer
+from ..graph import Graph, Node, get_nearest_node, get_nodes_within_radius, steer
+from ..search import AStar
 from .sampler import GoalBiasedSampler, Sampler, UniformSampler
+
+if TYPE_CHECKING:
+    from .rrg import RRGBase
 
 
 class RRTBase(ABC):
@@ -57,6 +62,9 @@ class RRTBase(ABC):
             self.collision_checker = EmptyCollisionChecker()
         else:
             self.collision_checker = collision_checker
+
+        self.root: Node | None = None
+        self.goal_node: Node | None = None
 
     def _check_start_goal_collision(self) -> bool:
         """Check if start and goal states are collision-free.
@@ -179,8 +187,6 @@ class RRT(RRTBase):
 
         # Tree
         self.nodes: list[Node] = []
-        self.root: Node | None = None
-        self.goal_node: Node | None = None
 
     def plan(self) -> list[Node] | None:
         """Run the RRT algorithm to find a path.
@@ -539,3 +545,205 @@ class RRTConnect(RRTBase):
         if self.swapped:
             return self.connection_point_goal
         return self.connection_point_start
+
+
+class RRTStarConfig(BaseModel):
+    """Configuration for RRT* algorithm."""
+
+    sampler: type[Sampler] = GoalBiasedSampler
+    max_iterations: int = 5000
+    step_size: float = 0.5
+    goal_tolerance: float = 0.5
+    goal_bias: float = 0.05
+    radius_gain: float = 1.0
+    seed: int | None = None
+
+
+class RRTStar(RRGBase):
+    """RRT* (RRT-Star) path planner."""
+
+    def __init__(
+        self,
+        start_state: tuple[float, ...] | np.ndarray | list[float],
+        goal_state: tuple[float, ...] | np.ndarray | list[float],
+        bounds: list[tuple[float, float]],
+        collision_checker: CollisionChecker | None = None,
+        config: RRTStarConfig | None = None,
+    ) -> None:
+        """Initialize the RRT* planner.
+
+        Args:
+            start_state: Starting state
+            goal_state: Goal state
+            bounds: List of (min, max) tuples for each dimension
+            collision_checker: Collision checker instance (None for obstacle-free)
+            config : RRTStarConfig
+        """
+        if config is None:
+            config = RRTStarConfig()
+
+        # Initialize base class
+        super().__init__(
+            start_state=start_state,
+            goal_state=goal_state,
+            bounds=bounds,
+            collision_checker=collision_checker,
+            max_iterations=config.max_iterations,
+            step_size=config.step_size,
+            goal_tolerance=config.goal_tolerance,
+            seed=config.seed,
+        )
+
+        self.radius_gain = config.radius_gain
+
+        # Sampler
+        if config.sampler is GoalBiasedSampler:
+            self.sampler = config.sampler(  # type: ignore[call-arg]
+                bounds=bounds,
+                goal_state=self.goal_state,
+                goal_bias=config.goal_bias,
+                seed=config.seed,
+            )
+        else:
+            self.sampler = config.sampler(bounds=bounds, seed=config.seed)
+
+        # Graph
+        self.graph = Graph()
+
+        # A*
+        self.astar = AStar(self.graph)
+
+        self.path: list[Node] | None = None
+
+    def plan(self) -> list[Node] | None:
+        """Run the RRG algorithm."""
+
+        self.root = Node(state=self.start_state)
+        self.path = None
+        self.goal_node = None
+
+        # graph initialization
+        self.graph.reset()
+        self.graph.add_node(self.root)
+
+        if not self._check_start_goal_collision():
+            return None
+
+        # Main RRG loop
+        for iteration in range(self.max_iterations):
+            # Sample a random state
+            random_state = self.sampler.sample()
+            random_node = Node(state=random_state)
+
+            # Find nearest node in the graph
+            nearest_node = get_nearest_node(self.graph.nodes, random_node)
+            new_node = steer(nearest_node, random_node, self.step_size)
+
+            # Check if the path is collision-free
+            if self.collision_checker.is_path_collision_free(nearest_node.state, new_node.state):
+                neighbor_nodes = self.get_near_node(new_node)
+                self.graph.add_node(new_node)
+
+                if neighbor_nodes is None:
+                    continue
+
+                min_cost_node = self.get_min_cost_node([*neighbor_nodes, nearest_node], new_node)
+
+                if min_cost_node is not None:
+                    self.graph.add_edge(
+                        min_cost_node, new_node, min_cost_node.distance_to(new_node)
+                    )
+
+                else:
+                    continue
+
+                for neighbor_node in neighbor_nodes:
+                    if not self.collision_checker.is_path_collision_free(
+                        neighbor_node.state, new_node.state
+                    ):
+                        continue
+
+                    if new_node.cost + neighbor_node.distance_to(new_node) < neighbor_node.cost:
+                        old_parent = neighbor_node.parent
+                        if old_parent:
+                            self.graph.remove_edge(neighbor_node, old_parent)
+                        self.graph.add_edge(
+                            new_node, neighbor_node, neighbor_node.distance_to(new_node)
+                        )
+                        neighbor_node.change_parent(
+                            new_node, new_node.cost + neighbor_node.distance_to(new_node)
+                        )
+
+                if self._is_goal_reached(new_node):
+                    self.goal_node = new_node
+                    print(f"Goal reached in {iteration + 1} iterations!")
+                    self.path = self.astar.search(self.root, self.goal_node)
+                    return self.path
+
+        return None
+
+    def get_near_node(self, target: Node) -> list[Node]:
+        """Get the near nodes of the target node."""
+        num_nodes = len(self.graph.nodes)
+
+        if num_nodes <= 1:
+            return []
+
+        radius = min(
+            self.step_size, self.radius_gain * np.power(np.log(num_nodes) / num_nodes, 1 / self.dim)
+        )
+        # radius = self.radius_gain * np.power(np.log(num_nodes) / num_nodes, 1 / self.dim)
+
+        return get_nodes_within_radius(self.graph.nodes, target, radius)
+
+    def get_min_cost_node(self, nodes: list[Node], target: Node) -> Node | None:
+        min_cost = float("inf")
+        min_cost_node = None
+
+        for node in nodes:
+            cost = node.cost + node.distance_to(target)
+            if cost < min_cost:
+                min_cost = cost
+                min_cost_node = node
+
+        return min_cost_node
+
+    def _is_goal_reached(self, node: Node) -> bool:
+        """Check if a node is close enough to the goal.
+
+        Args:
+            node: The node to check
+
+        Returns:
+            True if within goal tolerance
+        """
+        return bool(np.linalg.norm(node.state - self.goal_state) <= self.goal_tolerance)
+
+    def get_stats(self) -> dict[str, float | int | bool | None]:
+        """Get statistics about the planning process.
+
+        Returns:
+            Dictionary with number of nodes and edges
+        """
+        path_length = self.get_path_length()
+        return {
+            "num_nodes": len(self.graph.nodes),
+            "goal_reached": self.goal_node is not None,
+            "num_edges": len(self.graph.edges),
+            "path_length": path_length if path_length > 0 else None,
+            "path_nodes": len(self.path) if self.path else None,
+        }
+
+    def get_path_length(self) -> float:
+        """Get the total length of the current path."""
+        if not self.path:
+            return float("inf")
+
+        distances = [n.distance_to(n.parent) for n in self.path if n.parent]
+        return float(sum(distances)) if distances else float("inf")
+
+    def get_all_nodes(self) -> list[Node]:
+        return self.graph.nodes
+
+    def get_goal_node(self) -> Node | None:
+        return self.goal_node
