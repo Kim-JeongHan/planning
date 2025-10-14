@@ -497,7 +497,7 @@ class RRTStar(RRGBase):
             self.sampler = config.sampler(bounds=bounds, seed=config.seed)
 
     def plan(self) -> list[Node] | None:
-        """Run the RRG algorithm."""
+        """Run the RRT* algorithm."""
 
         self.root = Node(state=self.start_state)
         self.path = None
@@ -510,7 +510,7 @@ class RRTStar(RRGBase):
         if not self._check_start_goal_collision():
             return None
 
-        # Main RRG loop
+        # Main RRT* loop
         for iteration in range(self.max_iterations):
             # Sample a random state
             random_state = self.sampler.sample()
@@ -560,16 +560,21 @@ class RRTStar(RRGBase):
                 if self._is_goal_reached(new_node):
                     self.goal_node = new_node
                     print(f"Goal reached in {iteration + 1} iterations!")
-                    self.path = self.astar.search(self.root, self.goal_node)
+                    self.path = self._extract_path()
+
                     return self.path
 
         return None
 
     def get_min_cost_node(self, nodes: list[Node], target: Node) -> Node | None:
+        """Get the node from a list that provides the minimum cost to reach target."""
         min_cost = float("inf")
         min_cost_node = None
 
         for node in nodes:
+            if not self.collision_checker.is_path_collision_free(node.state, target.state):
+                continue
+
             cost = node.cost + node.distance_to(target)
             if cost < min_cost:
                 min_cost = cost
@@ -616,3 +621,11 @@ class RRTStar(RRGBase):
 
     def get_goal_node(self) -> Node | None:
         return self.goal_node
+
+    def _extract_path(self) -> list[Node]:
+        path = []
+        node = self.goal_node
+        while node:
+            path.append(node)
+            node = node.parent
+        return list(reversed(path))
