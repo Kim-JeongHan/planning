@@ -4,9 +4,8 @@ import numpy as np
 from pydantic import BaseModel, field_validator
 
 from ..collision import CollisionChecker
-from ..graph import Graph, Node, get_nearest_node, get_nodes_within_radius
-from ..search import AStar
-from .rrt import RRTBase
+from ..graph import Node, get_nearest_node, get_nodes_within_radius
+from .base import RRGBase
 from .sampler import GoalBiasedSampler, Sampler
 
 
@@ -30,51 +29,6 @@ class RRGConfig(BaseModel):
         if not issubclass(v, Sampler):
             raise TypeError("sampler must inherit from Sampler")
         return v
-
-
-class RRGBase(RRTBase):
-    """Base class for RRG algorithm."""
-
-    def __init__(
-        self,
-        start_state: tuple[float, ...] | np.ndarray | list[float],
-        goal_state: tuple[float, ...] | np.ndarray | list[float],
-        bounds: list[tuple[float, float]],
-        collision_checker: CollisionChecker | None = None,
-        max_iterations: int = 1000,
-        step_size: float = 0.5,
-        goal_tolerance: float = 0.5,
-        seed: int | None = None,
-    ) -> None:
-        """Initialize the RRG base class.
-
-        Args:
-            start_state: Starting state
-            goal_state: Goal state
-            bounds: List of (min, max) tuples for each dimension
-            collision_checker: Collision checker instance
-            max_iterations: Maximum number of iterations to run
-            step_size: Maximum distance to extend tree at each iteration
-            goal_tolerance: Distance threshold to consider goal reached
-            seed: Random seed for reproducibility
-        """
-        super().__init__(
-            start_state=start_state,
-            goal_state=goal_state,
-            bounds=bounds,
-            collision_checker=collision_checker,
-            max_iterations=max_iterations,
-            step_size=step_size,
-            goal_tolerance=goal_tolerance,
-            seed=seed,
-        )
-
-        # Graph
-        self.graph = Graph()
-        self.path: list[Node] | None = None
-
-        # A*
-        self.astar = AStar(self.graph)
 
 
 class RRG(RRGBase):

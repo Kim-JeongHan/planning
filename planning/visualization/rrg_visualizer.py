@@ -1,14 +1,10 @@
 """Visualization utilities for RRG (Rapidly-exploring Random Graph) algorithms."""
 
-from typing import TYPE_CHECKING
-
 import numpy as np
 import viser
 
 from ..graph import Graph
-
-if TYPE_CHECKING:
-    from ..sampling.rrg import RRGBase
+from ..sampling.base import RRGBase
 
 
 class RRGVisualizer:
