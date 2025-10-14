@@ -1,14 +1,10 @@
 """Visualization utilities for RRG (Rapidly-exploring Random Graph) algorithms."""
 
-from typing import TYPE_CHECKING
-
 import numpy as np
 import viser
 
 from ..graph import Graph
-
-if TYPE_CHECKING:
-    from ..sampling.rrg import RRG
+from ..sampling.base import RRGBase
 
 
 class RRGVisualizer:
@@ -50,7 +46,7 @@ class RRGVisualizer:
 
     def visualize_graph(
         self,
-        planner: "RRG",
+        planner: RRGBase,
         success_color: tuple[int, int, int] = (100, 150, 255),
         failure_color: tuple[int, int, int] = (255, 100, 100),
         line_width: float = 1.2,

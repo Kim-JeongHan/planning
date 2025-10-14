@@ -8,7 +8,7 @@ import viser
 from ..graph.node import Node
 
 if TYPE_CHECKING:
-    from ..sampling.rrt import RRTBase
+    from ..sampling.base import RRTBase
 
 
 class RRTVisualizer:
