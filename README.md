@@ -8,10 +8,11 @@ A Python 3D path planning library with visualization using Viser. Implements pat
 
 - 🚀 **Unified Architecture**: All planners extend `RRTBase` for consistency
 - 🎨 **Simple Visualization**: One API works for all planners - just pass the planner object
-- 🌳 **Multiple Algorithms**: RRT (single-tree) and RRT-Connect (bidirectional)
+- 🌳 **Multiple Algorithms**: RRT (single-tree), RRT-Connect (bidirectional), RRG (graph-based), and RRT* (optimal)
 - 📊 **Detailed Analytics**: Track successful paths and failed collision attempts
 - 📐 **N-Dimensional**: Works with any dimensional state space (2D, 3D, 4D+)
 - 🎯 **Obstacle Avoidance**: Integrated collision detection with boxes and spheres
+- ⚡ **Asymptotic Optimality**: RRT* and RRG converge to optimal solutions
 
 ## Requirements
 
@@ -30,55 +31,17 @@ uv sync --extra dev
 
 All visualization examples can be viewed at `http://localhost:8080` after running.
 
-### 1. Obstacle Map Generation
-
-Random procedural obstacle generation for testing.
-
-<img src="docs/images/obstacle_map_example.png" alt="Obstacle Map Example" width="100%" height="100%"/>
-
-**Features:**
-- Random obstacle placement
-- Configurable obstacle density
-- Visualized boundaries
-
-**Run:**
-```bash
-uv run python examples/obstacle_map_example.py
-```
-
----
-
-### 2. RRT (Rapidly-exploring Random Tree)
+### 1. RRT (Rapidly-exploring Random Tree)
 
 Basic single-tree RRT algorithm with obstacle avoidance.
 
 **Paper**: [LaValle, S. M. (1998). "Rapidly-exploring random trees: A new tool for path planning"](https://msl.cs.illinois.edu/~lavalle/papers/Lav98c.pdf)
 
-<img src="docs/images/rrt_example.png" alt="RRT Example" width="100%" height="100%"/>
+<img src="docs/images/rrt_mixed_obstacles_example.png" alt="RRT Example" width="100%" height="100%"/>
 
 **Features:**
 - Single-tree exploration from start to goal
-- Blue branches: Successful path
-- Red branches: Failed collision attempts
 - Real-time statistics (nodes explored, path length)
-
-**Run:**
-```bash
-uv run python examples/rrt_example.py
-```
-
----
-
-### 3. Mixed Obstacles (Boxes + Spheres)
-
-RRT with heterogeneous obstacle types.
-
-<img src="docs/images/rrt_mixed_obstacles_example.png" alt="Mixed Obstacles Example" width="100%" height="100%"/>
-
-**Features:**
-- Box obstacles (rectangular prisms)
-- Sphere obstacles (3D balls)
-- Combined collision checking
 
 **Run:**
 ```bash
@@ -87,7 +50,7 @@ uv run python examples/rrt_mixed_obstacles_example.py
 
 ---
 
-### 4. RRT-Connect (Bidirectional RRT)
+### 2. RRT-Connect (Bidirectional RRT)
 
 Faster convergence using dual-tree bidirectional search.
 
@@ -97,10 +60,7 @@ Faster convergence using dual-tree bidirectional search.
 
 **Features:**
 - Bidirectional search (start tree + goal tree)
-- Green branches: Start tree exploration
-- Cyan branches: Goal tree exploration
-- Blue line: Final connected path
-- Red branches: Failed collision attempts
+- Faster convergence than single-tree RRT
 
 **Run:**
 ```bash
@@ -110,7 +70,7 @@ uv run python examples/rrt_connect_example.py
 
 ---
 
-### 5. RRG (Rapidly-exploring Random Graph)
+### 3. RRG (Rapidly-exploring Random Graph)
 
 An optimal sampling-based path planner that creates a graph structure to find increasingly shorter paths.
 
@@ -119,14 +79,34 @@ An optimal sampling-based path planner that creates a graph structure to find in
 <img src="docs/images/rrg_example.png" alt="RRG Example" width="100%" height="100%"/>
 
 **Features:**
-- Builds a graph to connect samples to multiple neighbors, enabling path optimization.
-- Converges toward an optimal solution as more samples are added.
-- Blue line: Final shortest path found in the graph.
-- Gray lines: Edges of the random graph.
+- Builds a graph to connect samples to multiple neighbors, enabling path optimization
+- Converges toward an optimal solution as more samples are added
+- Graph-based structure allows multiple paths
 
 **Run:**
 ```bash
 uv run python examples/rrg_example.py
+```
+
+---
+
+### 4. RRT* (RRT-Star)
+
+An asymptotically optimal variant of RRT that rewires the tree to find shorter paths.
+
+**Paper**: [Karaman, S., & Frazzoli, E. (2011). "Sampling-based algorithms for optimal motion planning"](https://arxiv.org/pdf/1105.1186)
+
+<img src="docs/images/rrt_star_example.png" alt="RRT* Example" width="100%" height="100%"/>
+
+**Features:**
+- Asymptotically optimal path planning (converges to optimal solution)
+- Rewiring mechanism to minimize path cost
+- Uses A* search on the final graph to extract the optimal path
+- Combines exploration with optimization
+
+**Run:**
+```bash
+uv run python examples/rrt_star_example.py
 ```
 
 ---
@@ -175,7 +155,7 @@ uv run ruff check planning/ tests/
 import numpy as np
 import viser
 from planning.map import Map
-from planning.sampling import RRT, RRTConnect, RRTConfig, ObstacleCollisionChecker
+from planning.sampling import RRT, RRTConnect, RRTStar, RRTConfig, ObstacleCollisionChecker
 from planning.visualization import RRTVisualizer
 
 # Setup
@@ -184,7 +164,7 @@ map_env = Map(size=20, z_range=(0.5, 2.5))
 map_env.visualize_bounds(server)
 map_env.generate_obstacles(server, num_obstacles=10)
 
-# Create planner (RRT or RRT-Connect)
+# Create planner (RRT, RRT-Connect, or RRT*)
 rrt = RRT(
     start_state=np.array([-8.0, -8.0, 1.0]),
     goal_state=np.array([8.0, 8.0, 2.0]),
