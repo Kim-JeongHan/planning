@@ -448,6 +448,15 @@ class RRTStarConfig(BaseModel):
     radius_gain: float = 1.0
     seed: int | None = None
 
+    @field_validator("sampler")
+    @classmethod
+    def validate_sampler(cls, v: type[Sampler]) -> type[Sampler]:
+        if not isinstance(v, type):
+            raise TypeError("sampler must be a class type")
+        if not issubclass(v, Sampler):
+            raise TypeError("sampler must inherit from Sampler")
+        return v
+
 
 class RRTStar(RRGBase):
     """RRT* (RRT-Star) path planner."""
