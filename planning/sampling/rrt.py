@@ -541,6 +541,8 @@ class RRTStar(RRGBase):
                 min_cost_node = self.get_min_cost_node([*neighbor_nodes, nearest_node], new_node)
 
                 if min_cost_node is not None:
+                    best_cost = min_cost_node.cost + min_cost_node.distance_to(new_node)
+                    new_node.change_parent(min_cost_node, best_cost)
                     self.graph.add_edge(
                         min_cost_node, new_node, min_cost_node.distance_to(new_node)
                     )
@@ -628,10 +630,10 @@ class RRTStar(RRGBase):
     def get_path_length(self) -> float:
         """Get the total length of the current path."""
         if not self.path:
-            return float("inf")
+            return 0.0
 
         distances = [n.distance_to(n.parent) for n in self.path if n.parent]
-        return float(sum(distances)) if distances else float("inf")
+        return float(sum(distances)) if distances else 0.0
 
     def get_all_nodes(self) -> list[Node]:
         return self.graph.nodes

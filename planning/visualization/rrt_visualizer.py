@@ -59,7 +59,7 @@ class RRTVisualizer:
 
     def visualize_branches(
         self,
-        planner: RRTBase,
+        planner: "RRTBase",
         success_color: tuple[int, int, int] = (100, 150, 255),
         failure_color: tuple[int, int, int] = (255, 100, 100),
         line_width: float = 1.5,
