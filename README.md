@@ -107,6 +107,28 @@ Faster convergence using dual-tree bidirectional search.
 uv run python examples/rrt_connect_example.py
 ```
 
+
+---
+
+### 5. RRG (Rapidly-exploring Random Graph)
+
+An optimal sampling-based path planner that creates a graph structure to find increasingly shorter paths.
+
+**Paper**: [Karaman, S., & Frazzoli, E. (2011). "Sampling-based algorithms for optimal motion planning"](https://arxiv.org/pdf/1105.1186)
+
+<img src="docs/images/rrg_example.png" alt="RRG Example" width="100%" height="100%"/>
+
+**Features:**
+- Builds a graph to connect samples to multiple neighbors, enabling path optimization.
+- Converges toward an optimal solution as more samples are added.
+- Blue line: Final shortest path found in the graph.
+- Gray lines: Edges of the random graph.
+
+**Run:**
+```bash
+uv run python examples/rrg_example.py
+```
+
 ---
 
 ## Testing

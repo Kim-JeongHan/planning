@@ -38,7 +38,14 @@ class RRTBase(ABC):
         """
         self.start_state = np.array(start_state)
         self.goal_state = np.array(goal_state)
+        self.dim = len(start_state)
+        if len(self.start_state) != len(goal_state):
+            raise ValueError("Start and goal states must have the same dimension")
+
         self.bounds = bounds
+        if len(self.bounds) != self.dim:
+            raise ValueError("Bounds must have the same dimension as the start and goal states")
+
         self.max_iterations = max_iterations
         self.step_size = step_size
         self.goal_tolerance = goal_tolerance

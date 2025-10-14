@@ -183,6 +183,10 @@ class Node:
         """Hash based on state."""
         return hash(tuple(self.state))
 
+    def __lt__(self, other: "Node") -> bool:
+        """Define less-than for heap operations (based on unique id)."""
+        return id(self) < id(other)
+
 
 def distance(node1: Node, node2: Node) -> float:
     """Calculate distance between two nodes.
