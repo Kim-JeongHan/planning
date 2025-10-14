@@ -1,9 +1,9 @@
 """RRT (Rapidly-exploring Random Tree) algorithm implementation."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 
 import numpy as np
+from pydantic import BaseModel, field_validator
 
 from ..graph.node import Node, get_nearest_node, steer
 from .collision_checker import CollisionChecker, EmptyCollisionChecker, ObstacleCollisionChecker
@@ -104,14 +104,24 @@ class RRTBase(ABC):
         pass
 
 
-@dataclass
-class RRTConfig:
+class RRTConfig(BaseModel):
+    """Configuration for RRT algorithm."""
+
     sampler: type[Sampler] = GoalBiasedSampler
     max_iterations: int = 5000
     step_size: float = 0.5
     goal_tolerance: float = 0.5
     goal_bias: float = 0.05
     seed: int | None = None
+
+    @field_validator("sampler")
+    @classmethod
+    def validate_sampler(cls, v: type[Sampler]) -> type[Sampler]:
+        if not isinstance(v, type):
+            raise TypeError("sampler must be a class type")
+        if not issubclass(v, Sampler):
+            raise TypeError("sampler must inherit from Sampler")
+        return v
 
 
 class RRT(RRTBase):
@@ -150,7 +160,7 @@ class RRT(RRTBase):
         )
 
         # Sampler
-        if config.sampler == GoalBiasedSampler:
+        if config.sampler is GoalBiasedSampler:
             self.sampler = config.sampler(  # type: ignore[call-arg]
                 bounds=bounds,
                 goal_state=self.goal_state,
@@ -280,8 +290,9 @@ class RRT(RRTBase):
         return self.goal_node
 
 
-@dataclass
-class RRTConnectConfig:
+class RRTConnectConfig(BaseModel):
+    """Configuration for RRT-Connect algorithm."""
+
     max_iterations: int = 5000
     step_size: float = 0.5
     goal_tolerance: float = 0.5
