@@ -65,117 +65,88 @@ class RRTVisualizer:
         line_width: float = 1.5,
         prefix: str = "/branches",
     ) -> None:
-        """Visualize branches as success (blue) or failure (red) paths.
-
-        Args:
-            planner: RRTBase planner instance (RRT or RRTConnect)
-            success_color: RGB color for the successful path (blue)
-            failure_color: RGB color for failed paths (red)
-            line_width: Width of the branch lines
-            prefix: Prefix for scene node names
-        """
-        # Get nodes and goal_node from planner
+        """visualize branches of the RRT tree."""
         nodes = planner.get_all_nodes()
         goal_node = planner.get_goal_node()
-
-        # Find all leaf nodes
-        leaf_nodes = [node for node in nodes if node.is_leaf()]
-
-        # Sort by depth (longer branches first)
-        leaf_nodes.sort(key=lambda n: n.get_depth(), reverse=True)
-
-        # Separate success and failure paths
-        success_path_nodes = set()
-        if goal_node is not None:
-            # Mark all nodes in the success path
-            current: Node | None = goal_node
-            while current is not None:
-                success_path_nodes.add(current)
-                current = current.parent
-
-        # Categorize leaf nodes
-        success_leaves: list[Node] = []
-        failure_leaves: list[Node] = []
-
-        for leaf in leaf_nodes:
-            if leaf in success_path_nodes:
-                success_leaves.append(leaf)
-            else:
-                failure_leaves.append(leaf)
-
-        total_branches = len(success_leaves) + len(failure_leaves)
-        print(
-            f"Visualizing {total_branches} exploration branches ({len(success_leaves)} success, {len(failure_leaves)} failures)..."
+        leaf_nodes = sorted(
+            [n for n in nodes if n.is_leaf()],
+            key=lambda n: n.get_depth(),
+            reverse=True,
         )
 
-        # Draw failure branches (red)
-        for branch_idx, leaf_node in enumerate(failure_leaves):
-            path = leaf_node.get_path_from_root()
+        success_nodes = self._collect_success_nodes(goal_node)
+        success_leaves, failure_leaves = self._split_leaves(leaf_nodes, success_nodes)
 
-            # Draw this branch
+        print(
+            f"Visualizing {len(success_leaves) + len(failure_leaves)} branches "
+            f"({len(success_leaves)} success, {len(failure_leaves)} failure)..."
+        )
+
+        self._draw_branches(
+            failure_leaves, success_nodes, failure_color, line_width, f"{prefix}/failure"
+        )
+        self._draw_branches(
+            success_leaves, success_nodes, success_color, line_width, f"{prefix}/success"
+        )
+
+    # === helper functions ===
+
+    def _collect_success_nodes(self, goal_node: Node | None) -> set[Node]:
+        """collect all nodes on the success path."""
+        success_nodes = set()
+        current = goal_node
+        while current is not None:
+            success_nodes.add(current)
+            current = current.parent
+        return success_nodes
+
+    def _split_leaves(
+        self, leaf_nodes: list[Node], success_nodes: set[Node]
+    ) -> tuple[list[Node], list[Node]]:
+        """separate success leaves and failure leaves."""
+        success_leaves: list[Node] = []
+        failure_leaves: list[Node] = []
+        for leaf in leaf_nodes:
+            (success_leaves if leaf in success_nodes else failure_leaves).append(leaf)
+        return success_leaves, failure_leaves
+
+    def _draw_branches(
+        self,
+        leaves: list[Node],
+        success_nodes: set[Node],
+        color: tuple[int, int, int],
+        line_width: float,
+        prefix: str,
+    ) -> None:
+        """draw branches and end markers using leaves."""
+        segments, end_markers = [], []
+        for leaf in leaves:
+            path = leaf.get_path_from_root()
             for i in range(len(path) - 1):
-                parent_state = path[i].state
-                child_state = path[i + 1].state
-
-                # Skip if part of success path
-                if path[i] in success_path_nodes and path[i + 1] in success_path_nodes:
+                p, c = path[i], path[i + 1]
+                if color != (255, 100, 100) and p not in success_nodes and c not in success_nodes:
                     continue
+                parent_pos = self._get_pos(p.state)
+                child_pos = self._get_pos(c.state)
+                segments.append([parent_pos, child_pos])
+            end_markers.append(self._get_pos(path[-1].state))
 
-                # Extract positions
-                parent_pos = (
-                    parent_state[:3] if len(parent_state) >= 3 else np.append(parent_state, 0)
-                )
-                child_pos = child_state[:3] if len(child_state) >= 3 else np.append(child_state, 0)
-
-                points = np.array([parent_pos, child_pos])
-                self.server.scene.add_spline_catmull_rom(
-                    f"{prefix}/failure_{branch_idx}_segment_{i}",
-                    points=points,
-                    color=failure_color,
-                    line_width=line_width,
-                )
-
-            # Add marker at the end of the branch
-            end_pos = (
-                path[-1].state[:3] if len(path[-1].state) >= 3 else np.append(path[-1].state, 0)
+        if segments:
+            self.server.scene.add_line_segments(
+                f"{prefix}_branches",
+                points=np.array(segments),
+                colors=color,
+                line_width=line_width,
             )
+
+        for idx, pos in enumerate(end_markers):
             self.server.scene.add_icosphere(
-                f"{prefix}/failure_{branch_idx}_end",
+                f"{prefix}_end_{idx}",
                 radius=0.1,
-                position=tuple(end_pos),
-                color=failure_color,
+                position=tuple(pos),
+                color=color,
             )
 
-        # Draw success branches (blue) - usually just one or a few
-        for branch_idx, leaf_node in enumerate(success_leaves):
-            path = leaf_node.get_path_from_root()
-
-            # Draw this branch
-            for i in range(len(path) - 1):
-                parent_state = path[i].state
-                child_state = path[i + 1].state
-
-                # Extract positions
-                parent_pos = (
-                    parent_state[:3] if len(parent_state) >= 3 else np.append(parent_state, 0)
-                )
-                child_pos = child_state[:3] if len(child_state) >= 3 else np.append(child_state, 0)
-
-                points = np.array([parent_pos, child_pos])
-                self.server.scene.add_spline_catmull_rom(
-                    f"{prefix}/success_{branch_idx}_segment_{i}",
-                    points=points,
-                    color=success_color,
-                    line_width=line_width,
-                )
-
-            # Add marker at the end of the branch
-            end_pos = (
-                path[-1].state[:3] if len(path[-1].state) >= 3 else np.append(path[-1].state, 0)
-            )
-            self.server.scene.add_icosphere(
-                f"{prefix}/success_{branch_idx}_end",
-                radius=0.1,
-                position=tuple(end_pos),
-                color=success_color,
-            )
+    def _get_pos(self, state: np.ndarray) -> np.ndarray:
+        """extract 3D coordinates from state."""
+        return state[:3] if len(state) >= 3 else np.append(state, 0)

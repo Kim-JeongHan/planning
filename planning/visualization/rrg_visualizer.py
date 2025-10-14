@@ -51,9 +51,8 @@ class RRGVisualizer:
     def visualize_graph(
         self,
         planner: "RRG",
-        edge_color: tuple[int, int, int] = (150, 150, 150),
-        node_color: tuple[int, int, int] = (255, 255, 255),
         success_color: tuple[int, int, int] = (100, 150, 255),
+        failure_color: tuple[int, int, int] = (255, 100, 100),
         line_width: float = 1.2,
         prefix: str = "/graph",
     ) -> None:
@@ -61,9 +60,8 @@ class RRGVisualizer:
 
         Args:
             planner: RRG planner instance
-            edge_color: RGB color for general edges
-            node_color: RGB color for general nodes
-            success_color: RGB color for the final path
+            success_color: RGB color for the final path (default: blue)
+            failure_color: RGB color for failed edges (default: red)
             line_width: Line width for edges
             prefix: Scene prefix
         """
@@ -71,44 +69,49 @@ class RRGVisualizer:
         nodes = graph.nodes
         edges = graph.edges
 
-        # Draw all edges
-        for edge_idx, edge in enumerate(edges):
-            p1 = edge.node1.state
-            p2 = edge.node2.state
-            p1_pos, p2_pos = p1[:3], p2[:3]
-            points = np.array([p1_pos, p2_pos])
+        # Build set of edges in the success path
+        success_edge_set = set()
+        if planner.path:
+            for i in range(len(planner.path) - 1):
+                node1 = planner.path[i]
+                node2 = planner.path[i + 1]
+                # Add both directions since edges are undirected
+                success_edge_set.add((id(node1), id(node2)))
+                success_edge_set.add((id(node2), id(node1)))
 
-            self.server.scene.add_spline_catmull_rom(
-                f"{prefix}/edge_{edge_idx}",
-                points=points,
-                color=edge_color,
+        # Separate edges into success and failure
+        success_edge_points = []
+        failure_edge_points = []
+
+        for edge in edges:
+            p1 = edge.node1.state[:3]
+            p2 = edge.node2.state[:3]
+            edge_pair = (id(edge.node1), id(edge.node2))
+
+            if edge_pair in success_edge_set:
+                success_edge_points.append([p1, p2])
+            else:
+                failure_edge_points.append([p1, p2])
+
+        # Draw failure edges (red)
+        if failure_edge_points:
+            failure_points_array = np.array(failure_edge_points)
+            self.server.scene.add_line_segments(
+                f"{prefix}/failure_edges",
+                points=failure_points_array,
+                colors=failure_color,
                 line_width=line_width,
             )
 
-        # Draw all nodes
-        for node_idx, node in enumerate(nodes):
-            pos = node.state[:3]
-            self.server.scene.add_icosphere(
-                f"{prefix}/node_{node_idx}",
-                radius=0.08,
-                position=tuple(pos),
-                color=node_color,
+        # Draw success path edges (blue)
+        if success_edge_points:
+            success_points_array = np.array(success_edge_points)
+            self.server.scene.add_line_segments(
+                f"{prefix}/success_path",
+                points=success_points_array,
+                colors=success_color,
+                line_width=line_width,
             )
-
-        # If goal path exists, overlay it
-        if planner.path:
-            for i in range(len(planner.path) - 1):
-                p1 = planner.path[i].state
-                p2 = planner.path[i + 1].state
-                p1_pos, p2_pos = p1[:3], p2[:3]
-                points = np.array([p1_pos, p2_pos])
-
-                self.server.scene.add_spline_catmull_rom(
-                    f"{prefix}/success_segment_{i}",
-                    points=points,
-                    color=success_color,
-                    line_width=line_width * 2.0,
-                )
 
             # Mark goal node
             goal_node = planner.goal_node
@@ -127,5 +130,10 @@ class RRGVisualizer:
 
         print(
             f"Visualized RRG with {len(nodes)} nodes and {len(edges)} edges."
-            + (f" Path length: {len(planner.path)}" if planner.path else "")
+            + (
+                f" Success: {len(success_edge_points)}, Failure: {len(failure_edge_points)}"
+                if edges
+                else ""
+            )
+            + (f" | Path length: {len(planner.path)}" if planner.path else "")
         )
