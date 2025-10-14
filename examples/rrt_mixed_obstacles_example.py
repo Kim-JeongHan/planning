@@ -3,8 +3,9 @@
 import numpy as np
 import viser
 
+from planning.collision import ObstacleCollisionChecker
 from planning.map import BoxObstacle, Map, SphereObstacle
-from planning.sampling import RRT, ObstacleCollisionChecker, RRTConfig
+from planning.sampling import RRT, RRTConfig
 from planning.visualization import RRTVisualizer
 
 
