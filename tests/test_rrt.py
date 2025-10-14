@@ -9,7 +9,7 @@ def test_rrt_simple_2d():
     """Test RRT in simple 2D obstacle-free environment."""
     start = (0, 0)
     goal = (10, 10)
-    bounds = [(-2, 12), (-2, 12)]
+    bounds = [(-2.0, 12.0), (-2.0, 12.0)]
 
     rrt = RRT(
         start_state=start,
@@ -29,7 +29,7 @@ def test_rrt_reaches_goal():
     """Test that RRT finds goal within tolerance."""
     start = (0, 0, 0)
     goal = (5, 5, 2)
-    bounds = [(-1, 6), (-1, 6), (0, 3)]
+    bounds = [(-1.0, 6.0), (-1.0, 6.0), (0.0, 3.0)]
 
     rrt = RRT(
         start_state=start,
@@ -51,7 +51,7 @@ def test_rrt_stats():
     rrt = RRT(
         start_state=(0, 0),
         goal_state=(5, 5),
-        bounds=[(-1, 6), (-1, 6)],
+        bounds=[(-1.0, 6.0), (-1.0, 6.0)],
         config=RRTConfig(max_iterations=500, seed=42),
     )
 
@@ -68,7 +68,7 @@ def test_rrt_connect_simple():
     """Test RRT-Connect in obstacle-free space."""
     start = (0, 0, 0)
     goal = (10, 10, 5)
-    bounds = [(-2, 12), (-2, 12), (-2, 10)]
+    bounds = [(-2.0, 12.0), (-2.0, 12.0), (-2.0, 10.0)]
 
     rrt_connect = RRTConnect(
         start_state=start,
@@ -94,7 +94,7 @@ def test_rrt_invalid_start():
     rrt = RRT(
         start_state=(0, 0, 0),
         goal_state=(10, 10, 5),
-        bounds=[(-5, 15), (-5, 15), (-5, 10)],
+        bounds=[(-5.0, 15.0), (-5.0, 15.0), (-5.0, 10.0)],
         collision_checker=checker,
         config=RRTConfig(max_iterations=100),
     )
@@ -109,7 +109,7 @@ def test_rrt_tree_edges():
     rrt = RRT(
         start_state=(0, 0),
         goal_state=(5, 5),
-        bounds=[(-1, 6), (-1, 6)],
+        bounds=[(-1.0, 6.0), (-1.0, 6.0)],
         config=RRTConfig(max_iterations=100, seed=42),
     )
 
@@ -131,7 +131,7 @@ def test_rrt_connect_with_obstacles():
 
     start = (0, 0, 0)
     goal = (10, 10, 5)
-    bounds = [(-2, 12), (-2, 12), (-2, 10)]
+    bounds = [(-2.0, 12.0), (-2.0, 12.0), (-2.0, 10.0)]
 
     rrt_connect = RRTConnect(
         start_state=start,
@@ -167,7 +167,7 @@ def test_rrt_connect_collision_start():
     rrt_connect = RRTConnect(
         start_state=(0, 0, 0),
         goal_state=(10, 10, 5),
-        bounds=[(-5, 15), (-5, 15), (-5, 10)],
+        bounds=[(-5.0, 15.0), (-5.0, 15.0), (-5.0, 10.0)],
         collision_checker=checker,
         config=RRTConnectConfig(max_iterations=100),
     )
