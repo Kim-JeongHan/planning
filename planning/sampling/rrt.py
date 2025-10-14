@@ -4,8 +4,7 @@ import numpy as np
 from pydantic import BaseModel, field_validator
 
 from ..collision import CollisionChecker
-from ..graph import Graph, Node, get_nearest_node, get_nodes_within_radius, steer
-from ..search import AStar
+from ..graph import Node, get_nearest_node, get_nodes_within_radius, steer
 from .base import RRGBase, RRTBase
 from .sampler import GoalBiasedSampler, Sampler, UniformSampler
 
@@ -497,14 +496,6 @@ class RRTStar(RRGBase):
             )
         else:
             self.sampler = config.sampler(bounds=bounds, seed=config.seed)
-
-        # Graph
-        self.graph = Graph()
-
-        # A*
-        self.astar = AStar(self.graph)
-
-        self.path: list[Node] | None = None
 
     def plan(self) -> list[Node] | None:
         """Run the RRG algorithm."""
