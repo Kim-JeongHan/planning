@@ -82,16 +82,16 @@ def main(seed: int = 42) -> None:
         visualizer.visualize_graph(
             rrg,
             success_color=(100, 150, 255),
-            edge_color=(180, 180, 180),
-            node_color=(220, 220, 220),
+            failure_color=(255, 100, 100),  # Red
+            line_width=4,
         )
 
         print("\nVisualization complete!")
         print("Legend:")
-        print("  🔵 Blue path: Successful path from start to goal")
-        print("  ⚪️ White nodes/lines: Explored graph")
         print("  🟢 Green sphere: Start")
         print("  🔴 Red sphere: Goal")
+        print("  🔵 Blue lines: Final path")
+        print("  🔴 Red lines: Other edges in the graph")
         print("  📦 Orange boxes/spheres: Obstacles")
 
     else:
