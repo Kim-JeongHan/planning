@@ -5,7 +5,11 @@ import viser
 
 from planning.collision import ObstacleCollisionChecker
 from planning.map import Map
-from planning.sampling import RRTStar, RRTStarConfig
+from planning.sampling import (
+    GoalBiasedSampler,  # , UniformSampler
+    RRTStar,
+    RRTStarConfig,
+)
 from planning.visualization.rrg_visualizer import RRGVisualizer
 
 
@@ -59,6 +63,7 @@ def main(seed: int = 42) -> None:
         bounds=map_env.get_bounds(),
         collision_checker=collision_checker,
         config=RRTStarConfig(
+            sampler=GoalBiasedSampler,
             seed=seed,
             step_size=0.5,
             max_iterations=5000,

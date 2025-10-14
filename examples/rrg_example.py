@@ -5,6 +5,7 @@ import viser
 
 from planning.collision import ObstacleCollisionChecker
 from planning.map import Map
+from planning.sampling import GoalBiasedSampler  # , UniformSampler
 from planning.sampling.rrg import RRG, RRGConfig
 from planning.visualization.rrg_visualizer import RRGVisualizer
 
@@ -58,7 +59,13 @@ def main(seed: int = 42) -> None:
         goal_state=goal_state,
         bounds=map_env.get_bounds(),
         collision_checker=collision_checker,
-        config=RRGConfig(seed=seed, step_size=0.5, max_iterations=5000, radius_gain=0.8),
+        config=RRGConfig(
+            sampler=GoalBiasedSampler,
+            seed=seed,
+            step_size=0.5,
+            max_iterations=5000,
+            radius_gain=0.8,
+        ),
     )
 
     print("Planning with RRG...")
