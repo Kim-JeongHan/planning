@@ -145,3 +145,11 @@ class Graph:
         new_node = Node(state=new_state)
 
         return new_node, new_cost
+
+    def check_edge(self, node1: Node, node2: Node) -> bool:
+        """Check if an edge exists between two nodes."""
+        return Edge(node1, node2) in self.edges
+
+    def get_edge_by_node(self, node: Node) -> list[Edge]:
+        """Get the edges of a node."""
+        return [edge for edge in self.edges if edge.contains_node(node)]
