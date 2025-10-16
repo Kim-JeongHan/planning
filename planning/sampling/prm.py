@@ -132,3 +132,42 @@ class PRM(RRGBase):
     def get_near_node(self, target: Node) -> list[Node]:
         """Get the near nodes of the target node."""
         return get_nodes_within_radius(self.graph.nodes, target, self.radius)
+
+    def get_stats(self) -> dict[str, float | int | bool | None]:
+        """Get statistics about the planning process.
+
+        Returns:
+            Dictionary with number of nodes, edges, and path information
+        """
+        path_length = self.get_path_length()
+        return {
+            "num_nodes": len(self.graph.nodes),
+            "goal_reached": self.path is not None,
+            "num_edges": len(self.graph.edges),
+            "path_length": path_length if path_length < float("inf") else None,
+            "path_nodes": len(self.path) if self.path else None,
+        }
+
+    def get_path_length(self) -> float:
+        """Get the total length of the current path."""
+        if self.path is None:
+            return float("inf")
+
+        distances = [node.distance_to(node.parent) for node in self.path if node.parent]
+        return float(np.sum(distances)) if distances else float("inf")
+
+    def get_all_nodes(self) -> list[Node]:
+        """Get all nodes in the roadmap.
+
+        Returns:
+            List of all nodes in the graph
+        """
+        return self.graph.nodes
+
+    def get_goal_node(self) -> Node | None:
+        """Get the goal node.
+
+        Returns:
+            The goal node if path was found, None otherwise
+        """
+        return self.goal_node if self.path is not None else None
