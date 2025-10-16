@@ -1,22 +1,24 @@
-"""RRT with obstacles visualization using Viser."""
+"""RRT algorithm example with mixed obstacle types."""
 
 import numpy as np
 import viser
 
 from planning.collision import ObstacleCollisionChecker
-from planning.map import Map
+from planning.map import BoxObstacle, Map, SphereObstacle
 from planning.sampling import RRT, RRTConfig
-from planning.visualization import RRTVisualizer
+from planning.visualization import RRTVisualizer, setup_camera_top_view
 
 
 def main(seed: int = 42) -> None:
-    """RRT with obstacles and 3D visualization."""
-    print("=== RRT with Obstacles Visualization ===\n")
+    """RRT with mixed obstacle types and 3D visualization."""
 
     # Start Viser server
     server = viser.ViserServer()
     print("Viser server started!")
     print("Open http://localhost:8080 in your browser.\n")
+
+    # Setup camera view
+    setup_camera_top_view(server)
 
     # Create map
     map_env = Map(size=20, z_range=(0.5, 2.5))
@@ -26,22 +28,27 @@ def main(seed: int = 42) -> None:
     # Visualize map bounds
     map_env.visualize_bounds(server)
 
-    # Generate random obstacles
-    print("Generating obstacles...")
+    print("Generating mixed obstacles (boxes and spheres)...")
     obstacles = map_env.generate_obstacles(
         server=server,
         num_obstacles=15,
         min_size=0.5,
-        max_size=3.0,
+        max_size=2.5,
         seed=seed,
         color=(200, 100, 50),
         check_overlap=True,
+        obstacle_type="mixed",  # <-- Mixed obstacles!
     )
     print(f"Generated {len(obstacles)} obstacles\n")
 
+    box_count = sum(1 for obs in obstacles if isinstance(obs, BoxObstacle))
+    sphere_count = sum(1 for obs in obstacles if isinstance(obs, SphereObstacle))
+    print(f"  📦 Box obstacles: {box_count}")
+    print(f"  ⚪ Sphere obstacles: {sphere_count}\n")
+
     # Define start and goal
     start_state = np.array([-8.0, -8.0, 1.0])
-    goal_state = np.array([8.0, 8.0, 3.0])
+    goal_state = np.array([8.0, 8.0, 2.0])
 
     # Create visualizer
     visualizer = RRTVisualizer(server)
@@ -56,9 +63,9 @@ def main(seed: int = 42) -> None:
     rrt = RRT(
         start_state=start_state,
         goal_state=goal_state,
-        bounds=map_env.get_bounds(),  # Use map bounds
+        bounds=map_env.get_bounds(),
         collision_checker=collision_checker,
-        config=RRTConfig(seed=seed),
+        config=RRTConfig(seed=seed, max_iterations=5000),
     )
 
     print("Planning with RRT...")
@@ -73,12 +80,11 @@ def main(seed: int = 42) -> None:
     path = rrt.plan()
 
     if path is not None:
-        print(f"\nPath found with {len(path)} waypoints!")
+        print(f"\n✅ Path found with {len(path)} waypoints!")
         print(f"Path length: {rrt.get_path_length():.2f}")
         print(f"Total nodes explored: {len(rrt.get_all_nodes())}\n")
 
         # Visualize all paths (success: blue, failure: red)
-        # Now we can pass the planner directly!
         visualizer.visualize_branches(
             rrt,  # Pass the planner directly
             success_color=(100, 150, 255),  # Blue
@@ -92,9 +98,11 @@ def main(seed: int = 42) -> None:
         print("  🔴 Red paths: Failed (dead ends)")
         print("  🟢 Green sphere: Start")
         print("  🔴 Red sphere: Goal")
+        print("  📦 Orange boxes: Box obstacles")
+        print("  ⚪ Orange spheres: Sphere obstacles")
 
     else:
-        print("\nNo path found!")
+        print("\n❌ No path found!")
         print("Try increasing max_iterations or decreasing obstacle count.")
 
     # Statistics

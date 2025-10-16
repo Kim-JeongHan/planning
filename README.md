@@ -45,7 +45,7 @@ Basic single-tree RRT algorithm with obstacle avoidance.
 
 **Run:**
 ```bash
-uv run python examples/rrt_mixed_obstacles_example.py
+uv run python examples/rrt_star_example.py
 ```
 
 ---
