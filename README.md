@@ -6,13 +6,14 @@ A Python 3D path planning library with visualization using Viser. Implements pat
 
 ## Features
 
-- 🚀 **Unified Architecture**: All planners extend `RRTBase` for consistency
+- 🚀 **Unified Architecture**: All planners extend `RRTBase` or `RRGBase` for consistency
 - 🎨 **Simple Visualization**: One API works for all planners - just pass the planner object
-- 🌳 **Multiple Algorithms**: RRT (single-tree), RRT-Connect (bidirectional), RRG (graph-based), and RRT* (optimal)
+- 🌳 **Multiple Algorithms**: RRT (single-tree), RRT-Connect (bidirectional), RRG (graph-based), RRT* (optimal), and PRM (multi-query)
 - 📊 **Detailed Analytics**: Track successful paths and failed collision attempts
 - 📐 **N-Dimensional**: Works with any dimensional state space (2D, 3D, 4D+)
 - 🎯 **Obstacle Avoidance**: Integrated collision detection with boxes and spheres
 - ⚡ **Asymptotic Optimality**: RRT* and RRG converge to optimal solutions
+- 🗺️ **Multi-Query Planning**: PRM builds reusable roadmaps for efficient path queries
 
 ## Requirements
 
@@ -107,6 +108,37 @@ An asymptotically optimal variant of RRT that rewires the tree to find shorter p
 **Run:**
 ```bash
 uv run python examples/rrt_star_example.py
+```
+
+---
+
+### 5. PRM (Probabilistic Roadmap Method)
+
+A multi-query path planner that preprocesses the environment by building a roadmap, then efficiently answers path queries using graph search.
+
+**Paper**: [Kavraki, L. E., et al. (1996). "Probabilistic roadmaps for path planning in high-dimensional configuration spaces"](https://www.cs.cmu.edu/~motionplanning/papers/sbp_papers/PRM/prmbasic_01.pdf)
+
+<img src="docs/images/prm_example.png" alt="PRM Example" width="100%" height="100%"/>
+
+**Features:**
+- **Two-phase approach**: Preprocessing (roadmap construction) + Query (path search)
+- **Multi-query efficiency**: Build once, query many times with different start/goal pairs
+- **Uniform sampling**: Explores the free configuration space uniformly
+- **Graph structure**: Uses A* to find optimal path in the roadmap
+- **Reusable roadmap**: Same roadmap can answer multiple path planning queries
+
+**How it works:**
+1. **Learning Phase (Preprocessing)**:
+   - Sample random collision-free configurations
+   - Connect nearby samples with collision-free edges
+   - Build a roadmap (graph) of the free space
+2. **Query Phase**:
+   - Connect start and goal to the roadmap
+   - Use A* to find shortest path in the graph
+
+**Run:**
+```bash
+uv run python examples/prm_example.py
 ```
 
 ---
