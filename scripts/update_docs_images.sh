@@ -26,6 +26,7 @@ examples=(
     "rrt_star_example"
     "rrg_example"
     "prm_example"
+    "prm_star_example"
 )
 
 total=${#examples[@]}
@@ -43,8 +44,8 @@ for example in "${examples[@]}"; do
     # Get the PID of the background process
     pid=$!
 
-    # Wait for 1 second
-    sleep 1
+    # Wait for 3 seconds
+    sleep 3
 
     # Kill the process gracefully
     kill -SIGINT $pid 2>/dev/null || true
