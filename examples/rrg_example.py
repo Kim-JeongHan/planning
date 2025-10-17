@@ -1,5 +1,7 @@
 """RRG algorithm example with mixed obstacle types."""
 
+import argparse
+
 import numpy as np
 import viser
 
@@ -7,11 +9,11 @@ from planning.collision import ObstacleCollisionChecker
 from planning.map import Map
 from planning.sampling import GoalBiasedSampler  # , UniformSampler
 from planning.sampling.rrg import RRG, RRGConfig
-from planning.visualization import setup_camera_top_view
+from planning.visualization import save_docs_image, setup_camera_top_view
 from planning.visualization.rrg_visualizer import RRGVisualizer
 
 
-def main(seed: int = 42) -> None:
+def main(seed: int = 42, save_image: bool = False) -> None:
     """RRG with mixed obstacle types and 3D visualization."""
     print("=== RRG with Mixed Obstacles (Boxes & Spheres) ===\n")
 
@@ -45,8 +47,8 @@ def main(seed: int = 42) -> None:
     print(f"Generated {len(obstacles)} obstacles\n")
 
     # Define start and goal
-    start_state = np.array([-8.0, -8.0, 1.0])
-    goal_state = np.array([8.0, 8.0, 2.0])
+    start_state = np.array([8.0, 8.0, 2.0])
+    goal_state = np.array([-8.0, -8.0, 1.0])
 
     # Create visualizer
     visualizer = RRGVisualizer(server)
@@ -112,6 +114,17 @@ def main(seed: int = 42) -> None:
         # Visualize the graph even if no path is found
         visualizer.visualize_graph(rrg)
 
+    # Save image if requested
+    if save_image:
+
+        @server.on_client_connect
+        def handle_save(client: viser.ClientHandle) -> None:
+            """Save documentation image after client connects."""
+            print("\n📸 Saving image...")
+            time.sleep(2)  # Wait for rendering
+            save_docs_image(client, "rrg_example.png")
+            print("✅ Image saved to docs/images/rrg_example.png")
+
     # Keep server running
     print("\nPress Ctrl+C to exit.")
     while True:
@@ -125,4 +138,9 @@ def main(seed: int = 42) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="RRG algorithm example")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--save-image", action="store_true", help="Save documentation image")
+    args = parser.parse_args()
+
+    main(seed=args.seed, save_image=args.save_image)

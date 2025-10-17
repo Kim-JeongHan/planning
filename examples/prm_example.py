@@ -1,5 +1,7 @@
 """PRM (Probabilistic Roadmap Method) algorithm example."""
 
+import argparse
+
 import numpy as np
 import viser
 
@@ -7,11 +9,11 @@ from planning.collision import ObstacleCollisionChecker
 from planning.map import Map
 from planning.sampling.prm import PRM, PRMConfig
 from planning.sampling.sampler import UniformSampler
-from planning.visualization import setup_camera_top_view
+from planning.visualization import save_docs_image, setup_camera_top_view
 from planning.visualization.rrg_visualizer import RRGVisualizer
 
 
-def main(seed: int = 42) -> None:
+def main(seed: int = 42, save_image: bool = False) -> None:
     """PRM with mixed obstacle types and 3D visualization."""
     print("=== PRM (Probabilistic Roadmap Method) Example ===\n")
 
@@ -45,8 +47,8 @@ def main(seed: int = 42) -> None:
     print(f"Generated {len(obstacles)} obstacles\n")
 
     # Define start and goal
-    start_state = np.array([-8.0, -8.0, 1.0])
-    goal_state = np.array([8.0, 8.0, 2.0])
+    start_state = np.array([8.0, 8.0, 2.0])
+    goal_state = np.array([-8.0, -8.0, 1.0])
 
     # Create visualizer
     visualizer = RRGVisualizer(server)
@@ -96,7 +98,7 @@ def main(seed: int = 42) -> None:
         visualizer.visualize_graph(
             prm,
             success_color=(100, 150, 255),  # Blue for path
-            failure_color=(150, 150, 150),  # Gray for roadmap
+            failure_color=(255, 100, 100),  # Red for roadmap
             success_line_width=5.0,
             failure_line_width=1.0,
         )
@@ -106,7 +108,7 @@ def main(seed: int = 42) -> None:
         print("  🟢 Green sphere: Start")
         print("  🔴 Red sphere: Goal")
         print("  🔵 Blue lines: Final path (A* search result)")
-        print("  ⚪ Gray lines: Roadmap edges")
+        print("  🔴 Red lines: Roadmap edges")
         print("  📦 Orange boxes/spheres: Obstacles")
         print("\nNote: PRM builds a roadmap in preprocessing phase,")
         print("      then uses A* to find the shortest path in the roadmap.")
@@ -116,6 +118,17 @@ def main(seed: int = 42) -> None:
         print("Try increasing sample_number, max_retries, or connection radius.")
         # Visualize the roadmap even if no path is found
         visualizer.visualize_graph(prm)
+
+    # Save image if requested
+    if save_image:
+
+        @server.on_client_connect
+        def handle_save(client: viser.ClientHandle) -> None:
+            """Save documentation image after client connects."""
+            print("\n📸 Saving image...")
+            time.sleep(2)  # Wait for rendering
+            save_docs_image(client, "prm_example.png")
+            print("✅ Image saved to docs/images/prm_example.png")
 
     # Keep server running
     print("\nPress Ctrl+C to exit.")
@@ -130,4 +143,9 @@ def main(seed: int = 42) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="PRM algorithm example")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--save-image", action="store_true", help="Save documentation image")
+    args = parser.parse_args()
+
+    main(seed=args.seed, save_image=args.save_image)
