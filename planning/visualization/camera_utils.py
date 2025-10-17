@@ -1,14 +1,16 @@
 """Camera utilities for Viser visualization."""
 
 import imageio.v3 as iio
+import numpy as np
 import viser
+from PIL import Image
 
 from ..path import DOC_IMAGES_DIR
 
 
 def setup_camera_top_view(
     server: viser.ViserServer,
-    distance: float = 18,
+    distance: float = 17,
     look_at: tuple[float, float, float] = (0.0, 0.0, 0.0),
 ) -> None:
     """Setup camera for top-down view.
@@ -97,18 +99,113 @@ def capture_camera_view(
     @server.on_client_connect
     def capture_image(client: viser.ClientHandle) -> None:
         """Capture image and save it as an image."""
-        image = client.get_render(height=720, width=1280)
+        image = client.camera.get_render(height=720, width=1280)
         iio.imwrite(filename, image, extension=".png")
 
 
-def save_docs_image(
-    server: viser.ViserServer,
-    filename: str,
-) -> None:
-    """Save documentation image.
+def get_camera_view_image(
+    client: viser.ClientHandle,
+    height: int = 720,
+    width: int = 1280,
+) -> np.ndarray:
+    """Capture a camera view and return it as an image array.
 
     Args:
-        server: Viser server instance
-        filename: Filename to save the image
+        client: Viser client handle
+        height: Image height in pixels
+        width: Image width in pixels
+
+    Returns:
+        Image array (H, W, C)
     """
-    capture_camera_view(server, f"{DOC_IMAGES_DIR}/{filename}")
+    return client.camera.get_render(height=height, width=width)
+
+
+def remove_white_background_from_array(
+    image_array: np.ndarray, threshold: int = 240
+) -> Image.Image:
+    """Remove white background from image array.
+
+    Args:
+        image_array: Image array (H, W, C)
+        threshold: Threshold for white color detection (default: 240)
+
+    Returns:
+        Image with transparent background
+    """
+    # Convert numpy array to PIL Image with RGBA
+    if image_array.shape[2] == 3:
+        img = Image.fromarray(image_array).convert("RGBA")
+    else:
+        img = Image.fromarray(image_array)
+
+    data = np.array(img).astype(np.float32)
+
+    r, g, b, a = data[:, :, 0], data[:, :, 1], data[:, :, 2], data[:, :, 3]
+
+    white_mask = (r > threshold) & (g > threshold) & (b > threshold)
+
+    brightness = np.mean(data[:, :, :3], axis=2)
+    alpha_new = 255 * (1 - np.clip((brightness - threshold) / (255 - threshold), 0, 1))
+    data[:, :, 3] = np.minimum(a, alpha_new)
+
+    data[:, :, 3][white_mask] = 0
+
+    return Image.fromarray(data.astype(np.uint8))
+
+
+def crop_to_nontransparent_area(img: Image.Image) -> Image.Image:
+    """Crop transparent PNG to non-transparent bounding box.
+
+    Args:
+        img: PIL Image with transparency
+
+    Returns:
+        Cropped image
+    """
+    data = np.array(img)
+    alpha = data[:, :, 3]
+
+    nonzero = np.argwhere(alpha > 0)
+    if nonzero.size == 0:
+        return img
+
+    y_min, x_min = nonzero.min(axis=0)
+    y_max, x_max = nonzero.max(axis=0)
+
+    return img.crop((x_min, y_min, x_max + 1, y_max + 1))
+
+
+def save_docs_image(
+    client: viser.ClientHandle,
+    filename: str,
+    remove_background: bool = True,
+    threshold: int = 240,
+    height: int = 720,
+    width: int = 1280,
+) -> None:
+    """Save documentation image with optional background removal.
+
+    Args:
+        client: Viser client handle
+        filename: Filename to save the image
+        remove_background: Whether to remove white background (default: True)
+        threshold: Threshold for white color detection (default: 240)
+        height: Image height in pixels
+        width: Image width in pixels
+    """
+    output_path = f"{DOC_IMAGES_DIR}/{filename}"
+
+    # Get camera view as array
+    image_array = get_camera_view_image(client, height=height, width=width)
+
+    if remove_background:
+        print(f"🔍 Removing background from {filename}...")
+        img_no_bg = remove_white_background_from_array(image_array, threshold=threshold)
+        cropped_img = crop_to_nontransparent_area(img_no_bg)
+        cropped_img.save(output_path)
+        print(f"✅ Saved: {filename}")
+    else:
+        # Save without background removal
+        iio.imwrite(output_path, image_array, extension=".png")
+        print(f"✅ Saved: {filename}")
