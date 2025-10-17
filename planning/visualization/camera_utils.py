@@ -1,6 +1,9 @@
 """Camera utilities for Viser visualization."""
 
+import imageio.v3 as iio
 import viser
+
+from ..path import DOC_IMAGES_DIR
 
 
 def setup_camera_top_view(
@@ -17,7 +20,7 @@ def setup_camera_top_view(
     """
 
     @server.on_client_connect
-    def handle_client(client: viser.ClientHandle) -> None:
+    def handle_setup_camera(client: viser.ClientHandle) -> None:
         """Handle client connection and setup camera."""
         client.camera.position = (0.0, 0.0, distance)
         client.camera.look_at = look_at
@@ -48,7 +51,7 @@ def setup_camera_side_view(
     z = distance * np.sin(angle_rad)
 
     @server.on_client_connect
-    def handle_client(client: viser.ClientHandle) -> None:
+    def handle_setup_camera(client: viser.ClientHandle) -> None:
         """Handle client connection and setup camera."""
         client.camera.position = (x, 0.0, z)
         client.camera.look_at = look_at
@@ -78,8 +81,34 @@ def setup_camera_isometric_view(
     z = distance * np.sin(elevation)
 
     @server.on_client_connect
-    def handle_client(client: viser.ClientHandle) -> None:
+    def handle_setup_camera(client: viser.ClientHandle) -> None:
         """Handle client connection and setup camera."""
         client.camera.position = (x, y, z)
         client.camera.look_at = look_at
         client.camera.up_direction = (0.0, 0.0, 1.0)
+
+
+def capture_camera_view(
+    server: viser.ViserServer,
+    filename: str,
+) -> None:
+    """Capture a camera view and save it as an image."""
+
+    @server.on_client_connect
+    def capture_image(client: viser.ClientHandle) -> None:
+        """Capture image and save it as an image."""
+        image = client.get_render(height=720, width=1280)
+        iio.imwrite(filename, image, extension=".png")
+
+
+def save_docs_image(
+    server: viser.ViserServer,
+    filename: str,
+) -> None:
+    """Save documentation image.
+
+    Args:
+        server: Viser server instance
+        filename: Filename to save the image
+    """
+    capture_camera_view(server, f"{DOC_IMAGES_DIR}/{filename}")
