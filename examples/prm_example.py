@@ -45,8 +45,8 @@ def main(seed: int = 42) -> None:
     print(f"Generated {len(obstacles)} obstacles\n")
 
     # Define start and goal
-    start_state = np.array([-8.0, -8.0, 1.0])
-    goal_state = np.array([8.0, 8.0, 2.0])
+    start_state = np.array([8.0, 8.0, 2.0])
+    goal_state = np.array([-8.0, -8.0, 1.0])
 
     # Create visualizer
     visualizer = RRGVisualizer(server)
@@ -96,7 +96,7 @@ def main(seed: int = 42) -> None:
         visualizer.visualize_graph(
             prm,
             success_color=(100, 150, 255),  # Blue for path
-            failure_color=(150, 150, 150),  # Gray for roadmap
+            failure_color=(255, 100, 100),  # Gray for roadmap
             success_line_width=5.0,
             failure_line_width=1.0,
         )

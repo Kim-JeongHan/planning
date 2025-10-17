@@ -45,8 +45,8 @@ def main(seed: int = 42) -> None:
     print(f"Generated {len(obstacles)} obstacles\n")
 
     # Define start and goal
-    start_state = np.array([-8.0, -8.0, 1.0])
-    goal_state = np.array([8.0, 8.0, 2.0])
+    start_state = np.array([8.0, 8.0, 2.0])
+    goal_state = np.array([-8.0, -8.0, 1.0])
 
     # Create visualizer
     visualizer = RRGVisualizer(server)
