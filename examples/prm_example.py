@@ -98,7 +98,7 @@ def main(seed: int = 42, save_image: bool = False) -> None:
         visualizer.visualize_graph(
             prm,
             success_color=(100, 150, 255),  # Blue for path
-            failure_color=(255, 100, 100),  # Gray for roadmap
+            failure_color=(255, 100, 100),  # Red for roadmap
             success_line_width=5.0,
             failure_line_width=1.0,
         )
@@ -108,7 +108,7 @@ def main(seed: int = 42, save_image: bool = False) -> None:
         print("  🟢 Green sphere: Start")
         print("  🔴 Red sphere: Goal")
         print("  🔵 Blue lines: Final path (A* search result)")
-        print("  ⚪ Gray lines: Roadmap edges")
+        print("  🔴 Red lines: Roadmap edges")
         print("  📦 Orange boxes/spheres: Obstacles")
         print("\nNote: PRM builds a roadmap in preprocessing phase,")
         print("      then uses A* to find the shortest path in the roadmap.")
