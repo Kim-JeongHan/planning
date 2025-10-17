@@ -162,3 +162,61 @@ class PRM(RRGBase):
             The goal node if path was found, None otherwise
         """
         return self.goal_node if self.path is not None else None
+
+
+class PRMStarConfig(PRMConfig):
+    """PRM* configuration."""
+
+    radius_gain: float = 5.0
+
+
+class PRMStar(PRM):
+    """PRM* (Probabilistic Roadmap Method Star) path planner."""
+
+    def __init__(
+        self,
+        start_state: tuple[float, ...] | np.ndarray | list[float],
+        goal_state: tuple[float, ...] | np.ndarray | list[float],
+        bounds: list[tuple[float, float]],
+        collision_checker: CollisionChecker | None = None,
+        config: PRMStarConfig | None = None,
+    ) -> None:
+        """Initialize the PRM* planner.
+
+        Args:
+            start_state: Starting state
+            goal_state: Goal state
+            bounds: List of (min, max) tuples for each dimension
+            collision_checker: Collision checker instance (None for obstacle-free)
+            config: PRMStarConfig instance for algorithm parameters
+        """
+        if config is None:
+            config = PRMStarConfig()
+        super().__init__(
+            start_state=start_state,
+            goal_state=goal_state,
+            bounds=bounds,
+            collision_checker=collision_checker,
+            config=config,
+        )
+
+        self.radius_gain = config.radius_gain
+
+    def get_near_node(self, target: Node) -> list[Node]:
+        """Get the near nodes of the target node.
+
+        Uses dynamic radius calculation: r(n) = radius_gain * (log(n)/n)^(1/d)
+        where n is the number of nodes and d is the dimension. This ensures
+        asymptotic optimality as the number of samples increases.
+
+        Args:
+            target: Target node to find neighbors for
+
+        Returns:
+            List of nodes within the dynamic radius of the target node
+        """
+
+        radius = self.radius_gain * np.power(
+            np.log(len(self.graph.nodes)) / len(self.graph.nodes), 1 / self.dim
+        )
+        return get_nodes_within_radius(self.graph.nodes, target, radius)

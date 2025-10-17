@@ -8,12 +8,12 @@ A Python 3D path planning library with visualization using Viser. Implements pat
 
 - 🚀 **Unified Architecture**: All planners extend `RRTBase` or `RRGBase` for consistency
 - 🎨 **Simple Visualization**: One API works for all planners - just pass the planner object
-- 🌳 **Multiple Algorithms**: RRT (single-tree), RRT-Connect (bidirectional), RRG (graph-based), RRT* (optimal), and PRM (multi-query)
+- 🌳 **Multiple Algorithms**: RRT (single-tree), RRT-Connect (bidirectional), RRG (graph-based), RRT* (optimal), PRM (multi-query), and PRM* (optimal multi-query)
 - 📊 **Detailed Analytics**: Track successful paths and failed collision attempts
 - 📐 **N-Dimensional**: Works with any dimensional state space (2D, 3D, 4D+)
 - 🎯 **Obstacle Avoidance**: Integrated collision detection with boxes and spheres
-- ⚡ **Asymptotic Optimality**: RRT* and RRG converge to optimal solutions
-- 🗺️ **Multi-Query Planning**: PRM builds reusable roadmaps for efficient path queries
+- ⚡ **Asymptotic Optimality**: RRT*, RRG, and PRM* converge to optimal solutions
+- 🗺️ **Multi-Query Planning**: PRM and PRM* build reusable roadmaps for efficient path queries
 
 ## Requirements
 
@@ -143,6 +143,40 @@ uv run python examples/prm_example.py
 
 ---
 
+### 6. PRM* (Probabilistic Roadmap Method Star)
+
+An asymptotically optimal variant of PRM that uses dynamic connection radius to guarantee convergence to the optimal solution.
+
+**Paper**: [Karaman, S., & Frazzoli, E. (2011). "Sampling-based algorithms for optimal motion planning"](https://arxiv.org/pdf/1105.1186)
+
+<img src="docs/images/prm_star_example.png" alt="PRM* Example" width="100%" height="100%"/>
+
+**Features:**
+- **Asymptotic optimality**: Converges to the optimal path as samples increase
+- **Dynamic radius**: Connection radius decreases as $r(n) = \gamma \left(\frac{\log n}{n}\right)^{1/d}$ where $n$ is the number of nodes and $d$ is the dimension
+- **Multi-query efficiency**: Like PRM, supports multiple queries on the same roadmap
+- **Optimal graph structure**: Balances connectivity and optimality
+
+**Key Differences from PRM:**
+- **PRM**: Uses fixed connection radius, no optimality guarantee
+- **PRM***: Uses dynamic radius that shrinks with more samples, guarantees asymptotic optimality
+
+**How it works:**
+1. **Learning Phase**:
+   - Sample random collision-free configurations
+   - Connect each sample to neighbors within radius $r(n) = \gamma \left(\frac{\log n}{n}\right)^{1/d}$
+   - Connection radius decreases as more samples are added
+2. **Query Phase**:
+   - Connect start and goal to the roadmap
+   - Use A* to find shortest path in the optimal graph
+
+**Run:**
+```bash
+uv run python examples/prm_star_example.py
+```
+
+---
+
 ## Testing
 
 Run tests using pytest:
@@ -187,7 +221,7 @@ uv run ruff check planning/ tests/
 import numpy as np
 import viser
 from planning.map import Map
-from planning.sampling import RRT, RRTConnect, RRTStar, RRTConfig, ObstacleCollisionChecker
+from planning.sampling import RRT, RRTConnect, RRTStar, PRM, PRMStar, RRTConfig, ObstacleCollisionChecker
 from planning.visualization import RRTVisualizer
 
 # Setup
@@ -196,7 +230,7 @@ map_env = Map(size=20, z_range=(0.5, 2.5))
 map_env.visualize_bounds(server)
 map_env.generate_obstacles(server, num_obstacles=10)
 
-# Create planner (RRT, RRT-Connect, or RRT*)
+# Create planner (RRT, RRT-Connect, RRT*, PRM, or PRM*)
 rrt = RRT(
     start_state=np.array([-8.0, -8.0, 1.0]),
     goal_state=np.array([8.0, 8.0, 2.0]),

@@ -1,4 +1,4 @@
-"""PRM (Probabilistic Roadmap Method) algorithm example."""
+"""PRM* (Probabilistic Roadmap Method Star) algorithm example."""
 
 import argparse
 
@@ -7,15 +7,15 @@ import viser
 
 from planning.collision import ObstacleCollisionChecker
 from planning.map import Map
-from planning.sampling.prm import PRM, PRMConfig
+from planning.sampling.prm import PRMStar, PRMStarConfig
 from planning.sampling.sampler import UniformSampler
 from planning.visualization import save_docs_image, setup_camera_top_view
 from planning.visualization.rrg_visualizer import RRGVisualizer
 
 
 def main(seed: int = 42, save_image: bool = False) -> None:
-    """PRM with mixed obstacle types and 3D visualization."""
-    print("=== PRM (Probabilistic Roadmap Method) Example ===\n")
+    """PRM* with mixed obstacle types and 3D visualization."""
+    print("=== PRM* (Probabilistic Roadmap Method Star) Example ===\n")
 
     # Start Viser server
     server = viser.ViserServer()
@@ -59,44 +59,49 @@ def main(seed: int = 42, save_image: bool = False) -> None:
     # Create collision checker with map obstacles
     collision_checker = ObstacleCollisionChecker(map_env.obstacles)
 
-    # Create PRM planner
-    prm = PRM(
+    # Create PRM* planner
+    prm_star = PRMStar(
         start_state=start_state,
         goal_state=goal_state,
         bounds=map_env.get_bounds(),
         collision_checker=collision_checker,
-        config=PRMConfig(
+        config=PRMStarConfig(
             sampler=UniformSampler,
             seed=seed,
             step_size=0.1,
             sample_number=300,
+            radius_gain=5.0,
             max_retries=5,
-            radius=2.0,
             goal_tolerance=0.5,
         ),
     )
 
-    print("Planning with PRM...")
+    print("Planning with PRM*...")
     print(f"  Start: {start_state}")
     print(f"  Goal: {goal_state}")
     print(f"  Bounds: {map_env.get_bounds()}")
-    print(f"  Sample number: {prm.sample_number}")
-    print(f"  Max retries: {prm.max_retries}")
-    print(f"  Connection radius: {prm.radius}")
-    print(f"  Step size: {prm.step_size}")
-    print(f"  Goal tolerance: {prm.goal_tolerance}\n")
+    print(f"  Sample number: {prm_star.sample_number}")
+    print(f"  Max retries: {prm_star.max_retries}")
+    print(f"  Step size: {prm_star.step_size}")
+    print(f"  Radius gain: {prm_star.radius_gain}")
+    print(f"  Goal tolerance: {prm_star.goal_tolerance}\n")
 
     # Run planner
-    path = prm.plan()
+    path = prm_star.plan()
 
     if path is not None:
         print(f"\n✅ Path found with {len(path)} waypoints!")
-        print(f"Total nodes in roadmap: {len(prm.graph.nodes)}")
-        print(f"Total edges in roadmap: {len(prm.graph.edges)}\n")
+        print(f"Total nodes in roadmap: {len(prm_star.graph.nodes)}")
+        print(f"Total edges in roadmap: {len(prm_star.graph.edges)}\n")
+
+        # Get stats
+        stats = prm_star.get_stats()
+        if stats["path_length"] is not None:
+            print(f"Path length: {stats['path_length']:.2f}")
 
         # Visualize the roadmap and the final path
         visualizer.visualize_graph(
-            prm,
+            prm_star,
             success_color=(100, 150, 255),  # Blue for path
             failure_color=(255, 100, 100),  # Red for roadmap
             success_line_width=5.0,
@@ -110,14 +115,15 @@ def main(seed: int = 42, save_image: bool = False) -> None:
         print("  🔵 Blue lines: Final path (A* search result)")
         print("  🔴 Red lines: Roadmap edges")
         print("  📦 Orange boxes/spheres: Obstacles")
-        print("\nNote: PRM builds a roadmap in preprocessing phase,")
-        print("      then uses A* to find the shortest path in the roadmap.")
+        print("\nNote: PRM* uses dynamic radius calculation based on log(n)/n")
+        print("      for asymptotic optimality, ensuring connection radius")
+        print("      decreases as the number of samples increases.")
 
     else:
         print("\n❌ No path found!")
-        print("Try increasing sample_number, max_retries, or connection radius.")
+        print("Try increasing sample_number, max_retries, or radius_gain.")
         # Visualize the roadmap even if no path is found
-        visualizer.visualize_graph(prm)
+        visualizer.visualize_graph(prm_star)
 
     # Save image if requested
     if save_image:
@@ -125,10 +131,12 @@ def main(seed: int = 42, save_image: bool = False) -> None:
         @server.on_client_connect
         def handle_save(client: viser.ClientHandle) -> None:
             """Save documentation image after client connects."""
+            import time
+
             print("\n📸 Saving image...")
             time.sleep(2)  # Wait for rendering
-            save_docs_image(client, "prm_example.png")
-            print("✅ Image saved to docs/images/prm_example.png")
+            save_docs_image(client, "prm_star_example.png")
+            print("✅ Image saved to docs/images/prm_star_example.png")
 
     # Keep server running
     print("\nPress Ctrl+C to exit.")
@@ -143,7 +151,7 @@ def main(seed: int = 42, save_image: bool = False) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="PRM algorithm example")
+    parser = argparse.ArgumentParser(description="PRM* algorithm example")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--save-image", action="store_true", help="Save documentation image")
     args = parser.parse_args()
