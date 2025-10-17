@@ -617,14 +617,6 @@ class RRTStar(RRGBase):
             "path_nodes": len(self.path) if self.path else None,
         }
 
-    def get_path_length(self) -> float:
-        """Get the total length of the current path."""
-        if not self.path:
-            return 0.0
-
-        distances = [n.distance_to(n.parent) for n in self.path if n.parent]
-        return float(sum(distances)) if distances else 0.0
-
     def get_all_nodes(self) -> list[Node]:
         return self.graph.nodes
 

@@ -1,19 +1,19 @@
-"""RRG algorithm example with mixed obstacle types."""
+"""PRM (Probabilistic Roadmap Method) algorithm example."""
 
 import numpy as np
 import viser
 
 from planning.collision import ObstacleCollisionChecker
 from planning.map import Map
-from planning.sampling import GoalBiasedSampler  # , UniformSampler
-from planning.sampling.rrg import RRG, RRGConfig
+from planning.sampling.prm import PRM, PRMConfig
+from planning.sampling.sampler import UniformSampler
 from planning.visualization import setup_camera_top_view
 from planning.visualization.rrg_visualizer import RRGVisualizer
 
 
 def main(seed: int = 42) -> None:
-    """RRG with mixed obstacle types and 3D visualization."""
-    print("=== RRG with Mixed Obstacles (Boxes & Spheres) ===\n")
+    """PRM with mixed obstacle types and 3D visualization."""
+    print("=== PRM (Probabilistic Roadmap Method) Example ===\n")
 
     # Start Viser server
     server = viser.ViserServer()
@@ -57,60 +57,65 @@ def main(seed: int = 42) -> None:
     # Create collision checker with map obstacles
     collision_checker = ObstacleCollisionChecker(map_env.obstacles)
 
-    # Create RRG planner
-    rrg = RRG(
+    # Create PRM planner
+    prm = PRM(
         start_state=start_state,
         goal_state=goal_state,
         bounds=map_env.get_bounds(),
         collision_checker=collision_checker,
-        config=RRGConfig(
-            sampler=GoalBiasedSampler,
+        config=PRMConfig(
+            sampler=UniformSampler,
             seed=seed,
-            step_size=0.5,
-            max_iterations=5000,
-            radius_gain=0.8,
+            step_size=0.1,
+            sample_number=100,
+            max_retries=5,
+            radius=2.0,
+            goal_tolerance=0.5,
         ),
     )
 
-    print("Planning with RRG...")
+    print("Planning with PRM...")
     print(f"  Start: {start_state}")
     print(f"  Goal: {goal_state}")
     print(f"  Bounds: {map_env.get_bounds()}")
-    print(f"  Max iterations: {rrg.max_iterations}")
-    print(f"  Step size: {rrg.step_size}")
-    print(f"  Goal tolerance: {rrg.goal_tolerance}\n")
+    print(f"  Sample number: {prm.sample_number}")
+    print(f"  Max retries: {prm.max_retries}")
+    print(f"  Connection radius: {prm.radius}")
+    print(f"  Step size: {prm.step_size}")
+    print(f"  Goal tolerance: {prm.goal_tolerance}\n")
 
     # Run planner
-    path = rrg.plan()
+    path = prm.plan()
 
     if path is not None:
         print(f"\n✅ Path found with {len(path)} waypoints!")
-        # print(f"Path length: {rrg.get_path_length():.2f}")
-        print(f"Total nodes in graph: {len(rrg.graph.nodes)}")
-        print(f"Total edges in graph: {len(rrg.graph.edges)}\n")
+        print(f"Total nodes in roadmap: {len(prm.graph.nodes)}")
+        print(f"Total edges in roadmap: {len(prm.graph.edges)}\n")
 
-        # Visualize the graph and the final path
+        # Visualize the roadmap and the final path
         visualizer.visualize_graph(
-            rrg,
-            success_color=(100, 150, 255),
-            failure_color=(255, 100, 100),  # Red
-            success_line_width=4,
-            failure_line_width=4,
+            prm,
+            success_color=(100, 150, 255),  # Blue for path
+            failure_color=(150, 150, 150),  # Gray for roadmap
+            success_line_width=5.0,
+            failure_line_width=1.0,
         )
 
         print("\nVisualization complete!")
         print("Legend:")
         print("  🟢 Green sphere: Start")
         print("  🔴 Red sphere: Goal")
-        print("  🔵 Blue lines: Final path")
-        print("  🔴 Red lines: Other edges in the graph")
+        print("  🔵 Blue lines: Final path (A* search result)")
+        print("  ⚪ Gray lines: Roadmap edges")
         print("  📦 Orange boxes/spheres: Obstacles")
+        print("\nNote: PRM builds a roadmap in preprocessing phase,")
+        print("      then uses A* to find the shortest path in the roadmap.")
 
     else:
         print("\n❌ No path found!")
-        print("Try increasing max_iterations or changing the seed.")
-        # Visualize the graph even if no path is found
-        visualizer.visualize_graph(rrg)
+        print("Try increasing sample_number, max_retries, or connection radius.")
+        # Visualize the roadmap even if no path is found
+        visualizer.visualize_graph(prm)
 
     # Keep server running
     print("\nPress Ctrl+C to exit.")

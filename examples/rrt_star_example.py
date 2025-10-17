@@ -10,6 +10,7 @@ from planning.sampling import (
     RRTStar,
     RRTStarConfig,
 )
+from planning.visualization import setup_camera_top_view
 from planning.visualization.rrg_visualizer import RRGVisualizer
 
 
@@ -21,6 +22,9 @@ def main(seed: int = 42) -> None:
     server = viser.ViserServer()
     print("Viser server started!")
     print("Open http://localhost:8080 in your browser.\n")
+
+    # Setup camera view
+    setup_camera_top_view(server)
 
     # Create map
     map_env = Map(size=20, z_range=(0.5, 2.5))
@@ -95,7 +99,8 @@ def main(seed: int = 42) -> None:
             rrt_star,
             success_color=(100, 150, 255),  # Blue
             failure_color=(255, 100, 100),  # Red
-            line_width=4,
+            success_line_width=4,
+            failure_line_width=4,
         )
 
         print("\nVisualization complete!")

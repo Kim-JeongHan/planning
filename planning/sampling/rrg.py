@@ -150,14 +150,6 @@ class RRG(RRGBase):
             "path_nodes": len(self.path) if self.path else None,
         }
 
-    def get_path_length(self) -> float:
-        """Get the total length of the current path."""
-        if self.path is None:
-            return float("inf")
-
-        distances = [node.distance_to(node.parent) for node in self.path if node.parent]
-        return float(np.sum(distances)) if distances else float("inf")
-
     def get_all_nodes(self) -> list[Node]:
         return self.graph.nodes
 

@@ -6,7 +6,7 @@ import viser
 from planning.collision import ObstacleCollisionChecker
 from planning.map import Map
 from planning.sampling import RRTConnect, RRTConnectConfig
-from planning.visualization import RRTVisualizer
+from planning.visualization import RRTVisualizer, setup_camera_top_view
 
 
 def main(seed: int = 42) -> None:
@@ -15,6 +15,9 @@ def main(seed: int = 42) -> None:
     server = viser.ViserServer()
     print("🚀 Viser server started!")
     print("📱 Open http://localhost:8080 in your browser.\n")
+
+    # Setup camera view
+    setup_camera_top_view(server)
 
     # Create map
     map_env = Map(size=20, z_range=(0.5, 2.5))

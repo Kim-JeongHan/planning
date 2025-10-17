@@ -49,7 +49,8 @@ class RRGVisualizer:
         planner: RRGBase,
         success_color: tuple[int, int, int] = (100, 150, 255),
         failure_color: tuple[int, int, int] = (255, 100, 100),
-        line_width: float = 1.2,
+        success_line_width: float = 3.0,
+        failure_line_width: float = 1.2,
         prefix: str = "/graph",
     ) -> None:
         """Visualize all nodes and edges in the RRG graph.
@@ -58,7 +59,8 @@ class RRGVisualizer:
             planner: RRG planner instance
             success_color: RGB color for the final path (default: blue)
             failure_color: RGB color for failed edges (default: red)
-            line_width: Line width for edges
+            success_line_width: Line width for success path edges
+            failure_line_width: Line width for failure edges
             prefix: Scene prefix
         """
         graph: Graph = planner.graph
@@ -96,7 +98,7 @@ class RRGVisualizer:
                 f"{prefix}/failure_edges",
                 points=failure_points_array,
                 colors=failure_color,
-                line_width=line_width,
+                line_width=failure_line_width,
             )
 
         # Draw success path edges (blue)
@@ -106,7 +108,7 @@ class RRGVisualizer:
                 f"{prefix}/success_path",
                 points=success_points_array,
                 colors=success_color,
-                line_width=line_width,
+                line_width=success_line_width,
             )
 
             # Mark goal node
