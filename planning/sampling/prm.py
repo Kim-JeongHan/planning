@@ -98,7 +98,7 @@ class PRM(RRGBase):
                     self.graph.add_node(random_node)
 
                     neighbor_nodes = self.get_near_node(random_node)
-                    if neighbor_nodes == []:  # no neighbor nodes
+                    if not neighbor_nodes:  # no neighbor nodes
                         continue
 
                     sort_neighbor_nodes = sorted(
@@ -115,17 +115,16 @@ class PRM(RRGBase):
                             self.graph.add_edge(
                                 neighbor_node, random_node, neighbor_node.distance_to(random_node)
                             )
-            if self.graph.get_edge_by_node(self.goal_node):
+            # Check connectivity from root to goal; only stop when a path exists
+            candidate_path = self.astar.search(self.root, self.goal_node)
+            if candidate_path:
+                self.path = candidate_path
                 break
             else:
-                print(f"Failed to connect to goal node after {self.sample_number} iterations")
-                print("Try again sampling...")
+                print(f"No path found after {self.sample_number} samples; retrying...")
         else:
             print(f"❌ Failed to connect to goal after {self.max_retries} retries.")
             return None
-
-        # query stage
-        self.path = self.astar.search(self.root, self.goal_node)
 
         return self.path
 
@@ -147,14 +146,6 @@ class PRM(RRGBase):
             "path_length": path_length if path_length < float("inf") else None,
             "path_nodes": len(self.path) if self.path else None,
         }
-
-    def get_path_length(self) -> float:
-        """Get the total length of the current path."""
-        if self.path is None:
-            return float("inf")
-
-        distances = [node.distance_to(node.parent) for node in self.path if node.parent]
-        return float(np.sum(distances)) if distances else float("inf")
 
     def get_all_nodes(self) -> list[Node]:
         """Get all nodes in the roadmap.

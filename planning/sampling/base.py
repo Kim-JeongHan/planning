@@ -174,3 +174,13 @@ class RRGBase(RRTBase):
         )
 
         return get_nodes_within_radius(self.graph.nodes, target, radius)
+
+    def get_path_length(self) -> float:
+        """Get the total length of the current path."""
+        if self.path is None:
+            return float("inf")
+
+        if len(self.path) < 2:
+            return 0.0
+        distances = [self.path[i].distance_to(self.path[i + 1]) for i in range(len(self.path) - 1)]
+        return float(np.sum(distances)) if distances else float("inf")

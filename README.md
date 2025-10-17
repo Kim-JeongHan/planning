@@ -38,7 +38,7 @@ Basic single-tree RRT algorithm with obstacle avoidance.
 
 **Paper**: [LaValle, S. M. (1998). "Rapidly-exploring random trees: A new tool for path planning"](https://msl.cs.illinois.edu/~lavalle/papers/Lav98c.pdf)
 
-<img src="docs/images/rrt_mixed_obstacles_example.png" alt="RRT Example" width="100%" height="100%"/>
+<img src="docs/images/rrt_example.png" alt="RRT Example" width="100%" height="100%"/>
 
 **Features:**
 - Single-tree exploration from start to goal
