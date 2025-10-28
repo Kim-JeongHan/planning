@@ -45,8 +45,8 @@ def main(seed: int = 42, save_image: bool = False) -> None:
 
     box_count = sum(1 for obs in obstacles if isinstance(obs, BoxObstacle))
     sphere_count = sum(1 for obs in obstacles if isinstance(obs, SphereObstacle))
-    print(f"  📦 Box obstacles: {box_count}")
-    print(f"  ⚪ Sphere obstacles: {sphere_count}\n")
+    print(f"   Box obstacles: {box_count}")
+    print(f"   Sphere obstacles: {sphere_count}\n")
 
     # Define start and goal
     start_state = np.array([8.0, 8.0, 2.0])
@@ -82,7 +82,7 @@ def main(seed: int = 42, save_image: bool = False) -> None:
     path = rrt.plan()
 
     if path is not None:
-        print(f"\n✅ Path found with {len(path)} waypoints!")
+        print(f"\n Path found with {len(path)} waypoints!")
         print(f"Path length: {rrt.get_path_length():.2f}")
         print(f"Total nodes explored: {len(rrt.get_all_nodes())}\n")
 
@@ -96,15 +96,13 @@ def main(seed: int = 42, save_image: bool = False) -> None:
 
         print("\nVisualization complete!")
         print("Legend:")
-        print("  🔵 Blue paths: Successful (led to goal)")
-        print("  🔴 Red paths: Failed (dead ends)")
-        print("  🟢 Green sphere: Start")
-        print("  🔴 Red sphere: Goal")
-        print("  📦 Orange boxes: Box obstacles")
-        print("  ⚪ Orange spheres: Sphere obstacles")
+        print("   Blue paths: Successful (led to goal)")
+        print("   Red paths: Failed (dead ends)")
+        print("   Green sphere: Start")
+        print("   Red sphere: Goal")
 
     else:
-        print("\n❌ No path found!")
+        print("\nNo path found!")
         print("Try increasing max_iterations or decreasing obstacle count.")
 
     # Statistics
@@ -119,10 +117,10 @@ def main(seed: int = 42, save_image: bool = False) -> None:
         @server.on_client_connect
         def handle_save(client: viser.ClientHandle) -> None:
             """Save documentation image after client connects."""
-            print("\n📸 Saving image...")
+            print("\n Saving image...")
             time.sleep(2)  # Wait for rendering
             save_docs_image(client, "rrt_example.png")
-            print("✅ Image saved to docs/images/rrt_example.png")
+            print(" Image saved to docs/images/rrt_example.png")
 
     # Keep server running
     print("\nPress Ctrl+C to exit.")

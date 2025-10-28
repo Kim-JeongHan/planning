@@ -90,7 +90,7 @@ def main(seed: int = 42, save_image: bool = False) -> None:
     path = prm.plan()
 
     if path is not None:
-        print(f"\n✅ Path found with {len(path)} waypoints!")
+        print(f"\n Path found with {len(path)} waypoints!")
         print(f"Total nodes in roadmap: {len(prm.graph.nodes)}")
         print(f"Total edges in roadmap: {len(prm.graph.edges)}\n")
 
@@ -105,16 +105,16 @@ def main(seed: int = 42, save_image: bool = False) -> None:
 
         print("\nVisualization complete!")
         print("Legend:")
-        print("  🟢 Green sphere: Start")
-        print("  🔴 Red sphere: Goal")
-        print("  🔵 Blue lines: Final path (A* search result)")
-        print("  🔴 Red lines: Roadmap edges")
-        print("  📦 Orange boxes/spheres: Obstacles")
+        print("   Green sphere: Start")
+        print("   Red sphere: Goal")
+        print("   Blue lines: Final path (A* search result)")
+        print("   Red lines: Roadmap edges")
+        print("   Orange boxes/spheres: Obstacles")
         print("\nNote: PRM builds a roadmap in preprocessing phase,")
         print("      then uses A* to find the shortest path in the roadmap.")
 
     else:
-        print("\n❌ No path found!")
+        print("\n No path found!")
         print("Try increasing sample_number, max_retries, or connection radius.")
         # Visualize the roadmap even if no path is found
         visualizer.visualize_graph(prm)
@@ -125,10 +125,10 @@ def main(seed: int = 42, save_image: bool = False) -> None:
         @server.on_client_connect
         def handle_save(client: viser.ClientHandle) -> None:
             """Save documentation image after client connects."""
-            print("\n📸 Saving image...")
+            print("\n Saving image...")
             time.sleep(2)  # Wait for rendering
             save_docs_image(client, "prm_example.png")
-            print("✅ Image saved to docs/images/prm_example.png")
+            print(" Image saved to docs/images/prm_example.png")
 
     # Keep server running
     print("\nPress Ctrl+C to exit.")

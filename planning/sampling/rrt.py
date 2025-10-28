@@ -359,27 +359,26 @@ class RRTConnect(RRTBase):
         if self.connection_point_start is None or self.connection_point_goal is None:
             return []
 
-        # If trees were swapped, swap connection points back to original order
-        conn_start = self.connection_point_start
-        conn_goal = self.connection_point_goal
-        if self.swapped:
-            conn_start, conn_goal = conn_goal, conn_start
-
-        path_start = []
-        current_node: Node | None = conn_start
+        path_from_start = []
+        current_node: Node | None = self.connection_point_start
         while current_node is not None:
-            path_start.append(current_node)
-            current_node = current_node.parent
-        path_start.reverse()  # root → connection
-
-        path_goal = []
-        current_node = conn_goal
-        while current_node is not None:
-            path_goal.append(current_node)
+            path_from_start.append(current_node)
             current_node = current_node.parent
 
-        full_path = path_start + path_goal
-        return full_path
+        path_from_goal = []
+        current_node = (
+            self.connection_point_goal.parent
+        )  # Skip connection point itself (same as connection_point_start)
+        while current_node is not None:
+            path_from_goal.append(current_node)
+            current_node = current_node.parent
+
+        if len(path_from_start) > 0 and np.allclose(path_from_start[-1].state, self.start_state):
+            path_from_start.reverse()  # start → connection
+            return path_from_start + path_from_goal
+        else:
+            path_from_goal.reverse()  # start → connection
+            return path_from_goal + path_from_start
 
     def get_stats(self) -> dict:
         """Get statistics about the planning process.
@@ -417,9 +416,9 @@ class RRTConnect(RRTBase):
         """Get all nodes in both trees for visualization.
 
         Returns:
-            List of all nodes explored during planning (including failed attempts)
+            List of all nodes explored during planning
         """
-        return self.start_nodes + self.goal_nodes + self.failed_nodes
+        return self.start_nodes + self.goal_nodes
 
     def get_goal_node(self) -> Node | None:
         """Get the connection point for visualization.
