@@ -8,11 +8,12 @@ A Python 3D path planning library with visualization using Viser. Implements pat
 
 - 🚀 **Unified Architecture**: All planners extend `RRTBase` or `RRGBase` for consistency
 - 🎨 **Simple Visualization**: One API works for all planners - just pass the planner object
-- 🌳 **Multiple Algorithms**: RRT (single-tree), RRT-Connect (bidirectional), RRG (graph-based), RRT* (optimal), PRM (multi-query), and PRM* (optimal multi-query)
+- 🌳 **Multiple Algorithms**: RRT (single-tree), RRT-Connect (bidirectional), RRG (graph-based), RRT* (optimal), Informed RRT* (heuristic-guided optimal), PRM (multi-query), and PRM* (optimal multi-query)
 - 📊 **Detailed Analytics**: Track successful paths and failed collision attempts
 - 📐 **N-Dimensional**: Works with any dimensional state space (2D, 3D, 4D+)
 - 🎯 **Obstacle Avoidance**: Integrated collision detection with boxes and spheres
-- ⚡ **Asymptotic Optimality**: RRT*, RRG, and PRM* converge to optimal solutions
+- ⚡ **Asymptotic Optimality**: RRT*, Informed RRT*, RRG, and PRM* converge to optimal solutions
+- 🎯 **Informed Sampling**: Informed RRT* uses ellipsoidal heuristic for faster convergence
 - 🗺️ **Multi-Query Planning**: PRM and PRM* build reusable roadmaps for efficient path queries
 
 ## Requirements
@@ -46,7 +47,7 @@ Basic single-tree RRT algorithm with obstacle avoidance.
 
 **Run:**
 ```bash
-uv run python examples/rrt_star_example.py
+uv run python examples/rrt_example.py
 ```
 
 ---
@@ -102,7 +103,7 @@ An asymptotically optimal variant of RRT that rewires the tree to find shorter p
 **Features:**
 - Asymptotically optimal path planning (converges to optimal solution)
 - Rewiring mechanism to minimize path cost
-- Uses A* search on the final graph to extract the optimal path
+- Uniform sampling over entire state space
 - Combines exploration with optimization
 
 **Run:**
@@ -173,6 +174,50 @@ An asymptotically optimal variant of PRM that uses dynamic connection radius to 
 **Run:**
 ```bash
 uv run python examples/prm_star_example.py
+```
+
+---
+
+### 7. Informed RRT* - Comparison with RRT*
+
+Comparison of standard RRT* and its informed variant that uses heuristic sampling for faster convergence.
+
+| **RRT* (RRT-Star)** | **Informed RRT*** |
+|---------------------|-------------------|
+| <img src="docs/images/rrt_star_opt_example.png" alt="RRT* Example" width="100%"/> | <img src="docs/images/informed_rrt_star_example.png" alt="Informed RRT* Example" width="100%"/> |
+
+#### What is Informed RRT*?
+
+An improved version of RRT* that uses informed sampling within an ellipsoidal subset of the state space, leading to faster convergence to optimal solutions.
+
+**Paper**: [Gammell, J. D., et al. (2014). "Informed RRT*: Optimal sampling-based path planning focused via direct sampling of an admissible ellipsoidal heuristic"](https://arxiv.org/pdf/1404.2334)
+
+**Features:**
+- **Faster convergence**: Focuses sampling on regions that can improve the solution
+- **Ellipsoidal sampling**: After finding initial solution, samples only within prolate hyperspheroid defined by start, goal, and current best cost
+- **Asymptotic optimality**: Maintains optimality guarantee of RRT*
+- **Informed search**: Uses geometric heuristic to reject samples that cannot improve the path
+
+**How it works:**
+1. **Phase 1 (Exploration)**: Uses uniform sampling like RRT* until first path is found
+2. **Phase 2 (Exploitation)**: Samples only within ellipsoid where focus is on improving the current best solution
+3. The ellipsoid is defined by:
+   - Foci: start and goal states
+   - Minor axis: determined by current best path cost
+   - Only samples that could potentially improve the solution are considered
+
+**Key Differences:**
+
+| Aspect | RRT* | Informed RRT* |
+|--------|------|---------------|
+| **Sampling Strategy** | Uniform sampling over entire space throughout planning | Uniform initially, then focused ellipsoidal sampling after first solution |
+| **Convergence Speed** | Slower - explores entire space | Faster - focuses on promising regions |
+| **Optimality** | Asymptotically optimal | Asymptotically optimal (same guarantee) |
+| **When to Use** | Unknown environments, first solution priority | Known start/goal, optimization priority |
+
+**Run:**
+```bash
+uv run python examples/informed_rrt_star_example.py
 ```
 
 ---

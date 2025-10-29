@@ -8,6 +8,7 @@ import viser
 from planning.collision import ObstacleCollisionChecker
 from planning.map import Map
 from planning.sampling import InformedRRTStar, InformedRRTStarConfig
+from planning.sampling.sampler import GoalBiasedSampler
 from planning.visualization import save_docs_image, setup_camera_top_view
 from planning.visualization.rrg_visualizer import RRGVisualizer
 
@@ -25,7 +26,7 @@ def main(seed: int = 42, save_image: bool = False) -> None:
     setup_camera_top_view(server)
 
     # Create map
-    map_env = Map(size=30, z_range=(0.5, 6.0))
+    map_env = Map(size=20, z_range=(0.5, 2.5))
     print(f"Created map: {map_env}")
     print(f"Map bounds: {map_env.get_bounds()}\n")
 
@@ -46,8 +47,8 @@ def main(seed: int = 42, save_image: bool = False) -> None:
     print(f"Generated {len(obstacles)} obstacles\n")
 
     # Define start and goal
-    start_state = np.array([5.0, 5.0, 2.0])
-    goal_state = np.array([-5.0, -5.0, 1.0])
+    start_state = np.array([3.0, 3.0, 2.0])
+    goal_state = np.array([-3.0, -3.0, 1.0])
 
     # Create visualizer
     visualizer = RRGVisualizer(server)
@@ -65,11 +66,13 @@ def main(seed: int = 42, save_image: bool = False) -> None:
         bounds=map_env.get_bounds(),
         collision_checker=collision_checker,
         config=InformedRRTStarConfig(
+            sampler=GoalBiasedSampler,
             seed=seed,
             step_size=0.2,
             goal_tolerance=0.2,
-            max_iterations=10000,
-            radius_gain=1.0,
+            max_iterations=5000,
+            goal_bias=0.05,
+            radius_gain=0.4,
         ),
     )
 

@@ -122,7 +122,7 @@ class InformedSampler(Sampler):
         if c_best is not None and c_best < float("inf"):
             return self._sample_informed_ellipsoid(c_best)
         else:
-            raise AssertionError("c_best must be finite for informed sampling.")
+            return np.random.uniform(self.bounds[:, 0], self.bounds[:, 1])  # type: ignore[no-any-return]
 
     def _sample_informed_ellipsoid(self, c_best: float) -> np.ndarray:
         """Cholesky-based Informed sampling within the ellipsoid

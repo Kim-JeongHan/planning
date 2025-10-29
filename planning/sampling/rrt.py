@@ -446,6 +446,7 @@ class RRTStarConfig(BaseModel):
     goal_tolerance: float = 0.5
     goal_bias: float = 0.05
     radius_gain: float = 1.0
+    return_first_solution: bool = True
     seed: int | None = None
 
     @field_validator("sampler")
@@ -494,6 +495,8 @@ class RRTStar(RRGBase):
             seed=config.seed,
         )
 
+        self.return_first_solution = config.return_first_solution
+
         # Sampler
         if config.sampler is GoalBiasedSampler:
             self.sampler = config.sampler(  # type: ignore[call-arg]
@@ -506,8 +509,11 @@ class RRTStar(RRGBase):
             self.sampler = config.sampler(bounds=bounds, seed=config.seed)
 
     def plan(self) -> list[Node] | None:
-        """Run the RRT* algorithm."""
+        """Run the RRT* algorithm.
 
+        Returns:
+            List of nodes from start to goal, or None if no path found
+        """
         self.root = Node(state=self.start_state)
         self.path = None
         self.goal_node = None
@@ -518,6 +524,8 @@ class RRTStar(RRGBase):
 
         if not self._check_start_goal_collision():
             return None
+
+        goal_candidates: list[Node] = []
 
         # Main RRT* loop
         for iteration in tqdm(range(self.max_iterations), desc="RRT* Planning", unit="iter"):
@@ -549,31 +557,53 @@ class RRTStar(RRGBase):
                 else:
                     continue
 
-                for neighbor_node in neighbor_nodes:
-                    if not self.collision_checker.is_path_collision_free(
-                        neighbor_node.state, new_node.state
-                    ):
-                        continue
-
-                    if new_node.cost + neighbor_node.distance_to(new_node) < neighbor_node.cost:
-                        old_parent = neighbor_node.parent
-                        if old_parent:
-                            self.graph.remove_edge(neighbor_node, old_parent)
-                        self.graph.add_edge(
-                            new_node, neighbor_node, neighbor_node.distance_to(new_node)
-                        )
-                        neighbor_node.change_parent(
-                            new_node, new_node.cost + neighbor_node.distance_to(new_node)
-                        )
+                self._rewire_neighbors(new_node, neighbor_nodes)
 
                 if self._is_goal_reached(new_node):
-                    self.goal_node = new_node
-                    print(f"Goal reached in {iteration + 1} iterations!")
-                    self.path = self._extract_path()
+                    if self.return_first_solution:
+                        self.goal_node = new_node
+                        print(f"Goal reached in {iteration + 1} iterations!")
+                        self.path = self._extract_path()
+                        return self.path
+                    else:
+                        goal_candidates.append(new_node)
+                        if len(goal_candidates) == 1:
+                            print(
+                                f"First goal reached in {iteration + 1} iterations, continuing optimization..."
+                            )
 
-                    return self.path
+        if not self.return_first_solution and goal_candidates:
+            self.goal_node = min(goal_candidates, key=lambda node: node.cost)
+            print(
+                f"Best goal found with cost {self.goal_node.cost:.3f} from {len(goal_candidates)} candidates"
+            )
+            self.path = self._extract_path()
+            return self.path
 
         return None
+
+    def _rewire_neighbors(self, new_node: Node, neighbor_nodes: list[Node]) -> None:
+        """Rewire neighbor nodes if a better path through new_node exists.
+
+        Args:
+            new_node: The newly added node
+            neighbor_nodes: List of nodes to potentially rewire
+        """
+        for neighbor_node in neighbor_nodes:
+            if not self.collision_checker.is_path_collision_free(
+                neighbor_node.state, new_node.state
+            ):
+                continue
+
+            # Rewiring
+            if new_node.cost + neighbor_node.distance_to(new_node) < neighbor_node.cost:
+                old_parent = neighbor_node.parent
+                if old_parent:
+                    self.graph.remove_edge(neighbor_node, old_parent)
+                self.graph.add_edge(new_node, neighbor_node, neighbor_node.distance_to(new_node))
+                neighbor_node.change_parent(
+                    new_node, new_node.cost + neighbor_node.distance_to(new_node)
+                )
 
     def get_min_cost_node(self, nodes: list[Node], target: Node) -> Node | None:
         """Get the node from a list that provides the minimum cost to reach target."""
@@ -644,7 +674,7 @@ class InformedRRTStarConfig(BaseModel):
     seed: int | None = None
 
 
-class InformedRRTStar(RRGBase):
+class InformedRRTStar(RRTStar):
     """Informed RRT* path planner."""
 
     def __init__(
@@ -673,11 +703,14 @@ class InformedRRTStar(RRGBase):
             goal_state=goal_state,
             bounds=bounds,
             collision_checker=collision_checker,
-            max_iterations=config.max_iterations,
-            step_size=config.step_size,
-            goal_tolerance=config.goal_tolerance,
-            radius_gain=config.radius_gain,
-            seed=config.seed,
+            config=RRTStarConfig(
+                sampler=config.sampler,
+                max_iterations=config.max_iterations,
+                step_size=config.step_size,
+                goal_tolerance=config.goal_tolerance,
+                radius_gain=config.radius_gain,
+                seed=config.seed,
+            ),
         )
         if config.sampler is GoalBiasedSampler:
             self.sampler = config.sampler(  # type: ignore[call-arg]
@@ -758,29 +791,6 @@ class InformedRRTStar(RRGBase):
         self.path = self._extract_path() if self.goal_nodes else None
         return self.path
 
-    def _rewire_neighbors(self, new_node: Node, neighbor_nodes: list[Node]) -> None:
-        """Rewire neighbor nodes if a better path through new_node exists.
-
-        Args:
-            new_node: The newly added node
-            neighbor_nodes: List of nodes to potentially rewire
-        """
-        for neighbor_node in neighbor_nodes:
-            if not self.collision_checker.is_path_collision_free(
-                neighbor_node.state, new_node.state
-            ):
-                continue
-
-            # Rewiring
-            if new_node.cost + neighbor_node.distance_to(new_node) < neighbor_node.cost:
-                old_parent = neighbor_node.parent
-                if old_parent:
-                    self.graph.remove_edge(neighbor_node, old_parent)
-                self.graph.add_edge(new_node, neighbor_node, neighbor_node.distance_to(new_node))
-                neighbor_node.change_parent(
-                    new_node, new_node.cost + neighbor_node.distance_to(new_node)
-                )
-
     def get_min_cost_node(self, nodes: list[Node], target: Node) -> Node | None:
         """Get the node from a list that provides the minimum cost to reach target."""
         min_cost = float("inf")
@@ -796,17 +806,6 @@ class InformedRRTStar(RRGBase):
                 min_cost_node = node
 
         return min_cost_node
-
-    def _is_goal_reached(self, node: Node) -> bool:
-        """Check if a node is close enough to the goal.
-
-        Args:
-            node: The node to check
-
-        Returns:
-            True if within goal tolerance
-        """
-        return bool(np.linalg.norm(node.state - self.goal_state) <= self.goal_tolerance)
 
     def get_stats(self) -> dict[str, float | int | bool | None]:
         """Get statistics about the planning process.
