@@ -2,6 +2,7 @@
 
 import numpy as np
 from pydantic import BaseModel, field_validator
+from tqdm import tqdm
 
 from ..collision import CollisionChecker
 from ..graph import Node, get_nearest_node
@@ -92,7 +93,7 @@ class RRG(RRGBase):
             return None
 
         # Main RRG loop
-        for iteration in range(self.max_iterations):
+        for iteration in tqdm(range(self.max_iterations), desc="RRG Planning", unit="iter"):
             # Sample a random state
             random_state = self.sampler.sample()
             random_node = Node(state=random_state)

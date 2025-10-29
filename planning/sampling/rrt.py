@@ -2,11 +2,12 @@
 
 import numpy as np
 from pydantic import BaseModel, field_validator
+from tqdm import tqdm
 
 from ..collision import CollisionChecker
 from ..graph import Node, get_nearest_node, steer
 from .base import RRGBase, RRTBase
-from .sampler import GoalBiasedSampler, Sampler, UniformSampler
+from .sampler import GoalBiasedSampler, InformedSampler, Sampler, UniformSampler
 
 
 class RRTConfig(BaseModel):
@@ -94,7 +95,7 @@ class RRT(RRTBase):
             return None
 
         # Main RRT loop
-        for iteration in range(self.max_iterations):
+        for iteration in tqdm(range(self.max_iterations), desc="RRT Planning", unit="iter"):
             # Sample a random state
             random_state = self.sampler.sample()
             random_node = Node(state=random_state)
@@ -270,7 +271,7 @@ class RRTConnect(RRTBase):
             return None
 
         # Main loop
-        for iteration in range(self.max_iterations):
+        for iteration in tqdm(range(self.max_iterations), desc="RRT-Connect Planning", unit="iter"):
             # Sample random state
             random_state = self.sampler.sample()
             random_node = Node(state=random_state)
@@ -519,7 +520,7 @@ class RRTStar(RRGBase):
             return None
 
         # Main RRT* loop
-        for iteration in range(self.max_iterations):
+        for iteration in tqdm(range(self.max_iterations), desc="RRT* Planning", unit="iter"):
             # Sample a random state
             random_state = self.sampler.sample()
             random_node = Node(state=random_state)
@@ -573,6 +574,212 @@ class RRTStar(RRGBase):
                     return self.path
 
         return None
+
+    def get_min_cost_node(self, nodes: list[Node], target: Node) -> Node | None:
+        """Get the node from a list that provides the minimum cost to reach target."""
+        min_cost = float("inf")
+        min_cost_node = None
+
+        for node in nodes:
+            if not self.collision_checker.is_path_collision_free(node.state, target.state):
+                continue
+
+            cost = node.cost + node.distance_to(target)
+            if cost < min_cost:
+                min_cost = cost
+                min_cost_node = node
+
+        return min_cost_node
+
+    def _is_goal_reached(self, node: Node) -> bool:
+        """Check if a node is close enough to the goal.
+
+        Args:
+            node: The node to check
+
+        Returns:
+            True if within goal tolerance
+        """
+        return bool(np.linalg.norm(node.state - self.goal_state) <= self.goal_tolerance)
+
+    def get_stats(self) -> dict[str, float | int | bool | None]:
+        """Get statistics about the planning process.
+
+        Returns:
+            Dictionary with number of nodes and edges
+        """
+        path_length = self.get_path_length()
+        return {
+            "num_nodes": len(self.graph.nodes),
+            "goal_reached": self.goal_node is not None,
+            "num_edges": len(self.graph.edges),
+            "path_length": path_length if path_length > 0 else None,
+            "path_nodes": len(self.path) if self.path else None,
+        }
+
+    def get_all_nodes(self) -> list[Node]:
+        return self.graph.nodes
+
+    def get_goal_node(self) -> Node | None:
+        return self.goal_node
+
+    def _extract_path(self) -> list[Node]:
+        path = []
+        node = self.goal_node
+        while node:
+            path.append(node)
+            node = node.parent
+        return list(reversed(path))
+
+
+class InformedRRTStarConfig(BaseModel):
+    """Configuration for Informed RRT* algorithm."""
+
+    sampler: type[Sampler] = GoalBiasedSampler
+    max_iterations: int = 5000
+    step_size: float = 0.5
+    goal_tolerance: float = 0.5
+    radius_gain: float = 1.0
+    goal_bias: float = 0.05
+    seed: int | None = None
+
+
+class InformedRRTStar(RRGBase):
+    """Informed RRT* path planner."""
+
+    def __init__(
+        self,
+        start_state: tuple[float, ...] | np.ndarray | list[float],
+        goal_state: tuple[float, ...] | np.ndarray | list[float],
+        bounds: list[tuple[float, float]],
+        collision_checker: CollisionChecker | None = None,
+        config: InformedRRTStarConfig | None = None,
+    ) -> None:
+        """Initialize the RRT* planner.
+
+        Args:
+            start_state: Starting state
+            goal_state: Goal state
+            bounds: List of (min, max) tuples for each dimension
+            collision_checker: Collision checker instance (None for obstacle-free)
+            config : RRTStarConfig
+        """
+        if config is None:
+            config = InformedRRTStarConfig()
+
+        # Initialize base class
+        super().__init__(
+            start_state=start_state,
+            goal_state=goal_state,
+            bounds=bounds,
+            collision_checker=collision_checker,
+            max_iterations=config.max_iterations,
+            step_size=config.step_size,
+            goal_tolerance=config.goal_tolerance,
+            radius_gain=config.radius_gain,
+            seed=config.seed,
+        )
+        if config.sampler is GoalBiasedSampler:
+            self.sampler = config.sampler(  # type: ignore[call-arg]
+                bounds=bounds,
+                goal_state=self.goal_state,
+                goal_bias=config.goal_bias,
+                seed=config.seed,
+            )
+        else:
+            self.sampler = config.sampler(bounds=bounds, seed=config.seed)
+
+        self.informed_sampler = InformedSampler(
+            bounds=bounds,
+            start_state=self.start_state,
+            goal_state=self.goal_state,
+            seed=config.seed,
+        )
+        self.goal_nodes: list[Node] = []
+
+    def plan(self) -> list[Node] | None:
+        """Run the RRT* algorithm."""
+
+        self.root = Node(state=self.start_state)
+        self.path = None
+        self.goal_node = None
+        self.goal_nodes = []
+        # graph initialization
+        self.graph.reset()
+        self.graph.add_node(self.root)
+        c_best = float("inf")
+
+        if not self._check_start_goal_collision():
+            return None
+
+        # Main RRT* loop
+        for _ in tqdm(range(self.max_iterations), desc="Informed RRT* Planning", unit="iter"):
+            # Sample a random state
+            if self.goal_nodes:
+                c_best = min(node.cost for node in self.goal_nodes)
+                random_state = self.informed_sampler.sample(c_best)
+            else:
+                random_state = self.sampler.sample()
+
+            random_node = Node(state=random_state)
+
+            # Find nearest node in the graph
+            nearest_node = get_nearest_node(self.graph.nodes, random_node)
+            new_node = steer(nearest_node, random_node, self.step_size)
+
+            # Check if the path is collision-free
+            if self.collision_checker.is_path_collision_free(nearest_node.state, new_node.state):
+                neighbor_nodes = self.get_near_node(new_node)
+                self.graph.add_node(new_node)
+
+                if neighbor_nodes is None:
+                    continue
+
+                min_cost_node = self.get_min_cost_node([*neighbor_nodes, nearest_node], new_node)
+
+                if min_cost_node is not None:
+                    best_cost = min_cost_node.cost + min_cost_node.distance_to(new_node)
+                    new_node.change_parent(min_cost_node, best_cost)
+                    self.graph.add_edge(
+                        min_cost_node, new_node, min_cost_node.distance_to(new_node)
+                    )
+
+                else:
+                    continue
+
+                # Rewire neighbors to use new_node if it provides a better path
+                self._rewire_neighbors(new_node, neighbor_nodes)
+
+                if self._is_goal_reached(new_node):
+                    if self.goal_node is None or new_node.cost < self.goal_node.cost:
+                        self.goal_node = new_node
+                    self.goal_nodes.append(new_node)
+
+        self.path = self._extract_path() if self.goal_nodes else None
+        return self.path
+
+    def _rewire_neighbors(self, new_node: Node, neighbor_nodes: list[Node]) -> None:
+        """Rewire neighbor nodes if a better path through new_node exists.
+
+        Args:
+            new_node: The newly added node
+            neighbor_nodes: List of nodes to potentially rewire
+        """
+        for neighbor_node in neighbor_nodes:
+            if not self.collision_checker.is_path_collision_free(
+                neighbor_node.state, new_node.state
+            ):
+                continue
+
+            # Rewiring
+            if new_node.cost + neighbor_node.distance_to(new_node) < neighbor_node.cost:
+                old_parent = neighbor_node.parent
+                if old_parent:
+                    self.graph.remove_edge(neighbor_node, old_parent)
+                self.graph.add_edge(new_node, neighbor_node, neighbor_node.distance_to(new_node))
+                neighbor_node.change_parent(
+                    new_node, new_node.cost + neighbor_node.distance_to(new_node)
+                )
 
     def get_min_cost_node(self, nodes: list[Node], target: Node) -> Node | None:
         """Get the node from a list that provides the minimum cost to reach target."""
