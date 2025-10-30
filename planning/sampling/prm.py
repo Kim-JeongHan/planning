@@ -2,6 +2,7 @@
 
 import numpy as np
 from pydantic import BaseModel
+from tqdm import tqdm
 
 from ..collision import CollisionChecker
 from ..graph import Node, get_nodes_within_radius
@@ -88,8 +89,13 @@ class PRM(RRGBase):
             return None
 
         # Preprocess the graph
-        for _ in range(self.max_retries):
-            for _ in range(self.sample_number):
+        for retry in tqdm(range(self.max_retries), desc="PRM Preprocessing", unit="retry"):
+            for _ in tqdm(
+                range(self.sample_number),
+                desc=f"  Retry {retry+1}/{self.max_retries}",
+                unit="sample",
+                leave=False,
+            ):
                 # Sample a random state
                 random_state = self.sampler.sample()
                 random_node = Node(state=random_state)

@@ -9,7 +9,8 @@ authors = [
 requires-python = ">=3.10"
 dependencies = [
     "viser>=1.0.13",
-    "pydantic>=2.0.0",
+    "pydantic>=2.12.2,!=2.12.1",
+    "tqdm>=4.66.0",
 ]
 
 [project.optional-dependencies]

@@ -2,13 +2,23 @@
 
 from ..collision import ObstacleCollisionChecker
 from .prm import PRM, PRMConfig
-from .rrt import RRT, RRTConfig, RRTConnect, RRTConnectConfig, RRTStar, RRTStarConfig
-from .sampler import GoalBiasedSampler, Sampler, UniformSampler
+from .rrt import (
+    RRT,
+    InformedRRTStar,
+    RRTConfig,
+    RRTConnect,
+    RRTConnectConfig,
+    RRTStar,
+    RRTStarConfig,
+)
+from .sampler import GoalBiasedSampler, InformedSampler, Sampler, UniformSampler
 
 __all__ = [
     "PRM",
     "RRT",
     "GoalBiasedSampler",
+    "InformedRRTStar",
+    "InformedSampler",
     "ObstacleCollisionChecker",
     "PRMConfig",
     "RRTConfig",

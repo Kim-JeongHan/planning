@@ -27,6 +27,7 @@ examples=(
     "rrg_example"
     "prm_example"
     "prm_star_example"
+    "informed_rrt_star_example"
 )
 
 total=${#examples[@]}
