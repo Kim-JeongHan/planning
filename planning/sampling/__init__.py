@@ -5,7 +5,6 @@ from .prm import PRM, PRMConfig
 from .rrt import (
     RRT,
     InformedRRTStar,
-    InformedRRTStarConfig,
     RRTConfig,
     RRTConnect,
     RRTConnectConfig,
@@ -19,7 +18,6 @@ __all__ = [
     "RRT",
     "GoalBiasedSampler",
     "InformedRRTStar",
-    "InformedRRTStarConfig",
     "InformedSampler",
     "ObstacleCollisionChecker",
     "PRMConfig",

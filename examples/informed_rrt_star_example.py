@@ -7,7 +7,7 @@ import viser
 
 from planning.collision import ObstacleCollisionChecker
 from planning.map import Map
-from planning.sampling import InformedRRTStar, InformedRRTStarConfig
+from planning.sampling import InformedRRTStar, RRTStarConfig
 from planning.sampling.sampler import GoalBiasedSampler
 from planning.visualization import save_docs_image, setup_camera_top_view
 from planning.visualization.rrg_visualizer import RRGVisualizer
@@ -65,7 +65,7 @@ def main(seed: int = 42, save_image: bool = False) -> None:
         goal_state=goal_state,
         bounds=map_env.get_bounds(),
         collision_checker=collision_checker,
-        config=InformedRRTStarConfig(
+        config=RRTStarConfig(
             sampler=GoalBiasedSampler,
             seed=seed,
             step_size=0.2,

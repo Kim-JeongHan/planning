@@ -662,18 +662,6 @@ class RRTStar(RRGBase):
         return list(reversed(path))
 
 
-class InformedRRTStarConfig(BaseModel):
-    """Configuration for Informed RRT* algorithm."""
-
-    sampler: type[Sampler] = GoalBiasedSampler
-    max_iterations: int = 5000
-    step_size: float = 0.5
-    goal_tolerance: float = 0.5
-    radius_gain: float = 1.0
-    goal_bias: float = 0.05
-    seed: int | None = None
-
-
 class InformedRRTStar(RRTStar):
     """Informed RRT* path planner."""
 
@@ -683,19 +671,19 @@ class InformedRRTStar(RRTStar):
         goal_state: tuple[float, ...] | np.ndarray | list[float],
         bounds: list[tuple[float, float]],
         collision_checker: CollisionChecker | None = None,
-        config: InformedRRTStarConfig | None = None,
+        config: RRTStarConfig | None = None,
     ) -> None:
-        """Initialize the RRT* planner.
+        """Initialize the Informed RRT* planner.
 
         Args:
             start_state: Starting state
             goal_state: Goal state
             bounds: List of (min, max) tuples for each dimension
             collision_checker: Collision checker instance (None for obstacle-free)
-            config : RRTStarConfig
+            config: RRTStarConfig
         """
         if config is None:
-            config = InformedRRTStarConfig()
+            config = RRTStarConfig()
 
         # Initialize base class
         super().__init__(
@@ -729,6 +717,7 @@ class InformedRRTStar(RRTStar):
             seed=config.seed,
         )
         self.goal_nodes: list[Node] = []
+        self.first_solution_iteration: int | None = None
 
     def plan(self) -> list[Node] | None:
         """Run the RRT* algorithm."""
@@ -737,6 +726,7 @@ class InformedRRTStar(RRTStar):
         self.path = None
         self.goal_node = None
         self.goal_nodes = []
+        self.first_solution_iteration = None
         # graph initialization
         self.graph.reset()
         self.graph.add_node(self.root)
@@ -746,7 +736,9 @@ class InformedRRTStar(RRTStar):
             return None
 
         # Main RRT* loop
-        for _ in tqdm(range(self.max_iterations), desc="Informed RRT* Planning", unit="iter"):
+        for iteration in tqdm(
+            range(self.max_iterations), desc="Informed RRT* Planning", unit="iter"
+        ):
             # Sample a random state
             if self.goal_nodes:
                 c_best = min(node.cost for node in self.goal_nodes)
@@ -788,50 +780,23 @@ class InformedRRTStar(RRTStar):
                         self.goal_node = new_node
                     self.goal_nodes.append(new_node)
 
+                    # Track first solution iteration
+                    if self.first_solution_iteration is None:
+                        self.first_solution_iteration = iteration + 1
+                        print(
+                            f"First solution found at iteration {self.first_solution_iteration}, switching to informed sampling..."
+                        )
+
         self.path = self._extract_path() if self.goal_nodes else None
         return self.path
-
-    def get_min_cost_node(self, nodes: list[Node], target: Node) -> Node | None:
-        """Get the node from a list that provides the minimum cost to reach target."""
-        min_cost = float("inf")
-        min_cost_node = None
-
-        for node in nodes:
-            if not self.collision_checker.is_path_collision_free(node.state, target.state):
-                continue
-
-            cost = node.cost + node.distance_to(target)
-            if cost < min_cost:
-                min_cost = cost
-                min_cost_node = node
-
-        return min_cost_node
 
     def get_stats(self) -> dict[str, float | int | bool | None]:
         """Get statistics about the planning process.
 
         Returns:
-            Dictionary with number of nodes and edges
+            Dictionary with number of nodes, edges, and Informed RRT* specific stats
         """
-        path_length = self.get_path_length()
-        return {
-            "num_nodes": len(self.graph.nodes),
-            "goal_reached": self.goal_node is not None,
-            "num_edges": len(self.graph.edges),
-            "path_length": path_length if path_length > 0 else None,
-            "path_nodes": len(self.path) if self.path else None,
-        }
-
-    def get_all_nodes(self) -> list[Node]:
-        return self.graph.nodes
-
-    def get_goal_node(self) -> Node | None:
-        return self.goal_node
-
-    def _extract_path(self) -> list[Node]:
-        path = []
-        node = self.goal_node
-        while node:
-            path.append(node)
-            node = node.parent
-        return list(reversed(path))
+        base_stats = super().get_stats()
+        base_stats["first_solution_iteration"] = self.first_solution_iteration
+        base_stats["num_goal_candidates"] = len(self.goal_nodes)
+        return base_stats
