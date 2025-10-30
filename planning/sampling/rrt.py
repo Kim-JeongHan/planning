@@ -691,25 +691,8 @@ class InformedRRTStar(RRTStar):
             goal_state=goal_state,
             bounds=bounds,
             collision_checker=collision_checker,
-            config=RRTStarConfig(
-                sampler=config.sampler,
-                max_iterations=config.max_iterations,
-                step_size=config.step_size,
-                goal_tolerance=config.goal_tolerance,
-                radius_gain=config.radius_gain,
-                seed=config.seed,
-            ),
+            config=config,
         )
-        if config.sampler is GoalBiasedSampler:
-            self.sampler = config.sampler(  # type: ignore[call-arg]
-                bounds=bounds,
-                goal_state=self.goal_state,
-                goal_bias=config.goal_bias,
-                seed=config.seed,
-            )
-        else:
-            self.sampler = config.sampler(bounds=bounds, seed=config.seed)
-
         self.informed_sampler = InformedSampler(
             bounds=bounds,
             start_state=self.start_state,
@@ -717,7 +700,6 @@ class InformedRRTStar(RRTStar):
             seed=config.seed,
         )
         self.goal_nodes: list[Node] = []
-        self.first_solution_iteration: int | None = None
 
     def plan(self) -> list[Node] | None:
         """Run the RRT* algorithm."""
@@ -726,7 +708,6 @@ class InformedRRTStar(RRTStar):
         self.path = None
         self.goal_node = None
         self.goal_nodes = []
-        self.first_solution_iteration = None
         # graph initialization
         self.graph.reset()
         self.graph.add_node(self.root)
@@ -736,9 +717,7 @@ class InformedRRTStar(RRTStar):
             return None
 
         # Main RRT* loop
-        for iteration in tqdm(
-            range(self.max_iterations), desc="Informed RRT* Planning", unit="iter"
-        ):
+        for _ in tqdm(range(self.max_iterations), desc="Informed RRT* Planning", unit="iter"):
             # Sample a random state
             if self.goal_nodes:
                 c_best = min(node.cost for node in self.goal_nodes)
@@ -780,13 +759,6 @@ class InformedRRTStar(RRTStar):
                         self.goal_node = new_node
                     self.goal_nodes.append(new_node)
 
-                    # Track first solution iteration
-                    if self.first_solution_iteration is None:
-                        self.first_solution_iteration = iteration + 1
-                        print(
-                            f"First solution found at iteration {self.first_solution_iteration}, switching to informed sampling..."
-                        )
-
         self.path = self._extract_path() if self.goal_nodes else None
         return self.path
 
@@ -797,6 +769,5 @@ class InformedRRTStar(RRTStar):
             Dictionary with number of nodes, edges, and Informed RRT* specific stats
         """
         base_stats = super().get_stats()
-        base_stats["first_solution_iteration"] = self.first_solution_iteration
         base_stats["num_goal_candidates"] = len(self.goal_nodes)
         return base_stats
