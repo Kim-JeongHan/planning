@@ -6,4 +6,8 @@ from .collision_checker import (
     ObstacleCollisionChecker,
 )
 
-__all__ = ["CollisionChecker", "EmptyCollisionChecker", "ObstacleCollisionChecker"]
+__all__ = [
+    "CollisionChecker",
+    "EmptyCollisionChecker",
+    "ObstacleCollisionChecker",
+]

@@ -1,0 +1,10 @@
+# Shared settings for planner-based diffusion dataset generation.
+dataset_size: 200
+horizon: 16
+map_size: 24.0
+obstacle_count: 18
+seed: 42
+max_iterations: 4000
+step_size: 0.5
+goal_tolerance: 0.6
+quiet: false

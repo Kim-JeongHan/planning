@@ -1,7 +1,9 @@
 """RRT (Rapidly-exploring Random Tree) algorithm implementation."""
 
+from typing import Any
+
 import numpy as np
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from tqdm import tqdm
 
 from ..collision import CollisionChecker
@@ -14,6 +16,7 @@ class RRTConfig(BaseModel):
     """Configuration for RRT algorithm."""
 
     sampler: type[Sampler] = GoalBiasedSampler
+    sampler_kwargs: dict[str, Any] = Field(default_factory=dict)
     max_iterations: int = 5000
     step_size: float = 0.5
     goal_tolerance: float = 0.5
@@ -66,15 +69,13 @@ class RRT(RRTBase):
         )
 
         # Sampler
+        sampler_kwargs = dict(config.sampler_kwargs)
+        sampler_kwargs["bounds"] = bounds
+        sampler_kwargs["seed"] = config.seed
         if config.sampler is GoalBiasedSampler:
-            self.sampler = config.sampler(  # type: ignore[call-arg]
-                bounds=bounds,
-                goal_state=self.goal_state,
-                goal_bias=config.goal_bias,
-                seed=config.seed,
-            )
-        else:
-            self.sampler = config.sampler(bounds=bounds, seed=config.seed)
+            sampler_kwargs["goal_state"] = self.goal_state
+            sampler_kwargs["goal_bias"] = config.goal_bias
+        self.sampler = config.sampler(**sampler_kwargs)  # type: ignore[misc]
 
         # Tree
         self.nodes: list[Node] = []
@@ -441,6 +442,7 @@ class RRTStarConfig(BaseModel):
     """Configuration for RRT* algorithm."""
 
     sampler: type[Sampler] = GoalBiasedSampler
+    sampler_kwargs: dict[str, Any] = Field(default_factory=dict)
     max_iterations: int = 5000
     step_size: float = 0.5
     goal_tolerance: float = 0.5
@@ -498,15 +500,13 @@ class RRTStar(RRGBase):
         self.return_first_solution = config.return_first_solution
 
         # Sampler
+        sampler_kwargs = dict(config.sampler_kwargs)
+        sampler_kwargs["bounds"] = bounds
+        sampler_kwargs["seed"] = config.seed
         if config.sampler is GoalBiasedSampler:
-            self.sampler = config.sampler(  # type: ignore[call-arg]
-                bounds=bounds,
-                goal_state=self.goal_state,
-                goal_bias=config.goal_bias,
-                seed=config.seed,
-            )
-        else:
-            self.sampler = config.sampler(bounds=bounds, seed=config.seed)
+            sampler_kwargs["goal_state"] = self.goal_state
+            sampler_kwargs["goal_bias"] = config.goal_bias
+        self.sampler = config.sampler(**sampler_kwargs)  # type: ignore[misc]
 
     def plan(self) -> list[Node] | None:
         """Run the RRT* algorithm.

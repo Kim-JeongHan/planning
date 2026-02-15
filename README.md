@@ -222,6 +222,28 @@ uv run python examples/informed_rrt_star_example.py
 
 ---
 
+### 8. Diffuser-based one-shot trajectory generation
+
+- 8.1) Diffusion policy one-shot trajectory generation (new local workflow)
+```bash
+uv sync --extra diffuser
+uv run python examples/diffusion_trajectory_one_shot_example.py --run-config config/diffusion_trajectory_one_shot.yaml
+```
+
+- 8.2) RRT + DiffusionGuidedSampler integration (legacy workflow, kept for comparison)
+```bash
+uv run python examples/rrt_diffuser_3d_example.py --run-config config/rrt_diffuser_3d_example.yaml
+```
+
+Example smoke check:
+```bash
+uv run pytest tests/test_diffusion_trajectory_one_shot_example.py -v
+```
+
+`dataset`, `seed`, `loadbase`, `epoch` 등은 `config/*.yaml`로 통일 관리합니다.
+
+---
+
 ## Testing
 
 Run tests using pytest:

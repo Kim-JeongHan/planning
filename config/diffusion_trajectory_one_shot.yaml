@@ -1,0 +1,21 @@
+seed: 42
+loadbase: logs/diffusion_logs_h16
+dataset: diffusion_demo_dataset_h16
+diffusion_loadpath: f:diffusion/defaults_H16_T16
+value_loadpath: f:values/defaults_H16_T16_d1.0
+diffusion_epoch: best
+value_epoch: best
+n_guide_steps: 2
+scale: 0.1
+sample_batch_size: 8
+map_size: 24
+z_range: [0.5, 2.5]
+obstacle_count: 18
+obstacle_min_size: 0.5
+obstacle_max_size: 2.0
+obstacle_color: [200, 100, 50]
+start_state: [8.0, 8.0, 2.0]
+goal_state: [-8.0, -8.0, 1.0]
+condition_key: 0
+segment_resolution: 0.12
+endpoint_tolerance: 0.75

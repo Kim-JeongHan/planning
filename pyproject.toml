@@ -21,6 +21,14 @@ dev = [
     "black>=24.0.0",
     "mypy>=1.0.0",
 ]
+diffuser = [
+    "torch>=2.2.0",
+    "pyyaml>=6.0.2",
+]
+
+[build-system]
+requires = ["setuptools>=68.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [tool.ruff]
 line-length = 100
@@ -99,3 +107,13 @@ disallow_incomplete_defs = false
 [[tool.mypy.overrides]]
 module = "examples.*"
 disallow_untyped_defs = false
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["planning"]
+
+[tool.uv]
+extra-build-dependencies = { planning = ["setuptools>=68.0.0", "wheel"] }

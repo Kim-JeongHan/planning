@@ -146,7 +146,7 @@ class InformedSampler(Sampler):
         """
         while True:
             scale_matrix = np.diag(
-                [(c_best / 2.0)] + [np.sqrt(c_best**2 - self.c_min**2) / 2.0] * (self.dim - 1)
+                [c_best / 2.0] + [np.sqrt(c_best**2 - self.c_min**2) / 2.0] * (self.dim - 1)
             )
 
             ball_sample = np.random.normal(0, 1, self.dim)
