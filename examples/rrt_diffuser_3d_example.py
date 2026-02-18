@@ -12,6 +12,7 @@ import numpy as np
 import viser
 
 from planning.collision import ObstacleCollisionChecker
+from planning.diffusion.utils import CheckpointCatalog
 from planning.map import Map
 from planning.sampling import RRT, DiffusionGuidedSampler, RRTConfig
 from planning.visualization import RRTVisualizer, save_docs_image, setup_camera_top_view
@@ -32,19 +33,28 @@ def _can_bind_default_viser_port() -> bool:
         test_socket.close()
 
 
-def _expand_checkpoint_patterns(loadpath: str) -> str:
-    """Replace config-style placeholders with wildcards for path discovery."""
-    path_template = loadpath.removeprefix("f:")
-    return (
-        path_template.replace("{horizon}", "*")
-        .replace("{n_diffusion_steps}", "*")
-        .replace("{discount}", "*")
-    )
-
-
-def _find_matching_checkpoints(checkpoint_root: Path, loadpath: str) -> list[Path]:
-    pattern = _expand_checkpoint_patterns(loadpath)
-    return sorted(checkpoint_root.glob(pattern))
+def _resolve_checkpoint_root(
+    *,
+    loadbase: Path,
+    dataset: str,
+    loadpath: str,
+    config: str | None,
+) -> Path | None:
+    """Resolve a diffusion checkpoint root and return None if missing."""
+    try:
+        catalog = CheckpointCatalog(
+            str(loadbase),
+            dataset=dataset,
+            loadpath=loadpath,
+            config=config,
+        )
+    except Exception:
+        # Preserve original behavior and keep planning runnable even with malformed inputs.
+        return None
+    try:
+        return catalog.root
+    except Exception:
+        return None
 
 
 def _load_run_config(config_path: str) -> dict[str, object]:
@@ -131,10 +141,10 @@ def main(  # noqa: C901
         raise TypeError("value_epoch must be int or string")
 
     dataset_name = Path(dataset).stem
-    checkpoint_root = Path(loadbase) / dataset_name
+    loadbase_path = Path(loadbase)
+    checkpoint_root = loadbase_path / dataset_name
     if not checkpoint_root.exists():
         available_datasets = []
-        loadbase_path = Path(loadbase)
         if loadbase_path.exists():
             available_datasets = [item.name for item in loadbase_path.iterdir() if item.is_dir()]
             suffix = (
@@ -143,25 +153,32 @@ def main(  # noqa: C901
             )
         else:
             suffix = "\n  Also, this loadbase path does not exist yet."
-        print(
-            "Warning: checkpoint root not found for sampling config."
-            f"\n  Expected: {checkpoint_root}"
-            "\n  If this is your first run, provide matching loadbase/dataset in run config."
-            f"{suffix}"
-        )
+            print(
+                "Warning: checkpoint root not found for sampling config."
+                f"\n  Expected: {checkpoint_root}"
+                "\n  If this is your first run, provide matching loadbase/dataset in run config."
+                f"{suffix}"
+            )
     else:
-        diffusion_matches = _find_matching_checkpoints(
-            checkpoint_root=checkpoint_root, loadpath=diffusion_loadpath
+        dataset_key = checkpoint_root.name
+        diffusion_root = _resolve_checkpoint_root(
+            loadbase=loadbase_path,
+            dataset=dataset_key,
+            loadpath=diffusion_loadpath,
+            config=config,
         )
-        value_matches = _find_matching_checkpoints(
-            checkpoint_root=checkpoint_root, loadpath=value_loadpath
+        value_root = _resolve_checkpoint_root(
+            loadbase=loadbase_path,
+            dataset=dataset_key,
+            loadpath=value_loadpath,
+            config=config,
         )
-        if not diffusion_matches:
+        if not (diffusion_root and diffusion_root.exists()):
             print(
                 "Warning: no diffusion checkpoint directory matched for template "
                 f"'{diffusion_loadpath}'. Checked under: {checkpoint_root}"
             )
-        if not value_matches:
+        if not (value_root and value_root.exists()):
             print(
                 "Warning: no value checkpoint directory matched for template "
                 f"'{value_loadpath}'. Checked under: {checkpoint_root}"

@@ -1,13 +1,10 @@
 """Diffusion-guided sampler for planner integration."""
 
 from __future__ import annotations
-
-import inspect
 from collections.abc import Callable, Mapping
 
 import numpy as np
 
-from ..diffusion import sampling as _diffuser_sampling
 from ..diffusion import utils as _diffuser_utils
 from .sampler import Sampler
 
@@ -98,7 +95,7 @@ class DiffusionGuidedSampler(Sampler):
         self.t_stopgrad = t_stopgrad
         self.scale_grad_by_std = scale_grad_by_std
         self.preprocess_fns = preprocess_fns or []
-        self.sample_fn = sample_fn or _diffuser_sampling.n_step_guided_p_sample
+        self.sample_fn = sample_fn
         self.condition_key = condition_key
         self.condition = np.asarray(condition, dtype=float) if condition is not None else None
         self.state_indices = state_indices
@@ -106,6 +103,7 @@ class DiffusionGuidedSampler(Sampler):
         self.sample_batch_size = sample_batch_size
         self.max_projection_retries = max_projection_retries
         self.verbose = verbose
+        self.seed = seed
         self.policy_kwargs = policy_kwargs or {}
 
         self._policy = None
@@ -218,16 +216,16 @@ class DiffusionGuidedSampler(Sampler):
         return policy_config()
 
     def _load_diffusion_checkpoint(self, loadpath: str, epoch: str | int) -> object:
-        load_kwargs = {"epoch": epoch, "seed": None}
-        if self.config and "config" in inspect.signature(_diffuser_utils.load_diffusion).parameters:
-            load_kwargs["config"] = self.config
-
-        return _diffuser_utils.load_diffusion(
+        catalog = _diffuser_utils.CheckpointCatalog(
             self.loadbase,
             self.dataset,
             loadpath,
-            **load_kwargs,
+            config=self.config,
         )
+        return _diffuser_utils.DiffusionArtifactLoader(
+            catalog,
+            seed=self.seed,
+        ).load(epoch)
 
     def _format_conditions(self) -> Mapping[int | str, np.ndarray]:
         if self.condition is None:

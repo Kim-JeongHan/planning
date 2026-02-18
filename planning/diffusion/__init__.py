@@ -7,14 +7,38 @@ external ``diffuser`` dependency originally referenced by the project.
 
 from __future__ import annotations
 
-from .sampling import GuidedPolicy, ValueGuide, n_step_guided_p_sample
-from .utils import Config, check_compatibility, load_diffusion
+from .sampling import (
+    ConditionAdapter,
+    DiffusionSamplingEngine,
+    GuidancePolicy,
+    GuidedPolicy,
+    ModelPredictor,
+    ValueGuide,
+)
+from .training.checkpoint import CheckpointConfig, CheckpointPathManager, CheckpointWriter
+from .training.trainer import DiffusionTrainingPipeline
+from .utils import (
+    CheckpointCatalog,
+    Config,
+    DiffusionArtifactLoader,
+    TemplatingContextResolver,
+    check_compatibility,
+)
 
 __all__ = [
+    "CheckpointCatalog",
+    "CheckpointConfig",
+    "CheckpointPathManager",
+    "CheckpointWriter",
     "Config",
+    "ConditionAdapter",
+    "DiffusionArtifactLoader",
+    "DiffusionSamplingEngine",
+    "DiffusionTrainingPipeline",
     "GuidedPolicy",
-    "ValueGuide",
+    "GuidancePolicy",
+    "ModelPredictor",
     "check_compatibility",
-    "load_diffusion",
-    "n_step_guided_p_sample",
+    "TemplatingContextResolver",
+    "ValueGuide",
 ]

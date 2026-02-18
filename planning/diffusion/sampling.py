@@ -12,116 +12,149 @@ from .core import PlannerStateNormalizer
 from .training.noise import DiffusionSchedule
 
 
-def _to_condition_vector(conditions: dict[object, object] | None, state_dim: int) -> np.ndarray:
-    if not conditions:
+class ConditionAdapter:
+    """Normalize condition inputs used by guides and samplers."""
+
+    @staticmethod
+    def to_vector(conditions: dict[object, object] | None, state_dim: int) -> np.ndarray:
+        if not conditions:
+            return np.zeros((state_dim,), dtype=float)
+
+        goal = conditions.get("goal", None)
+        if isinstance(goal, (list, tuple, np.ndarray)):
+            goal_array = np.asarray(goal, dtype=float)
+            return goal_array[:state_dim]
+
+        if isinstance(conditions, dict) and len(conditions):
+            for key in ("goal", "target", "end", "final", "pose"):
+                candidate = conditions.get(key, None)
+                if isinstance(candidate, (list, tuple, np.ndarray)):
+                    candidate_arr = np.asarray(candidate, dtype=float)
+                    if candidate_arr.size >= state_dim:
+                        if (
+                            candidate_arr.size % state_dim == 0
+                            and candidate_arr.size >= 2 * state_dim
+                        ):
+                            candidate_arr = candidate_arr.reshape(-1, state_dim)
+                            return candidate_arr[-1]
+                        return candidate_arr[:state_dim]
+
+            last = list(conditions.values())[-1]
+            if isinstance(last, (list, tuple, np.ndarray)):
+                last_arr = np.asarray(last, dtype=float)
+                if last_arr.size >= state_dim:
+                    if (
+                        last_arr.size % state_dim == 0
+                        and last_arr.size >= 2 * state_dim
+                    ):
+                        last_arr = last_arr.reshape(-1, state_dim)
+                        return last_arr[-1]
+                    return last_arr[:state_dim]
+
         return np.zeros((state_dim,), dtype=float)
 
-    goal = conditions.get("goal", None)
-    if isinstance(goal, (list, tuple, np.ndarray)):
-        goal_array = np.asarray(goal, dtype=float)
-        return goal_array[:state_dim]
+    @staticmethod
+    def to_matrix(
+        condition: object,
+        batch_size: int | None,
+        fallback_dim: int | None = None,
+    ) -> np.ndarray | None:
+        if condition is None:
+            return None
+        if isinstance(condition, dict):
+            if fallback_dim is None:
+                raise ValueError("fallback_dim is required when condition is a mapping")
+            condition = ConditionAdapter.to_vector(condition, fallback_dim)
 
-    if isinstance(conditions, dict) and len(conditions):
-        for key in ("goal", "target", "end", "final", "pose"):
-            candidate = conditions.get(key, None)
-            if isinstance(candidate, (list, tuple, np.ndarray)):
-                candidate_arr = np.asarray(candidate, dtype=float)
-                if candidate_arr.size >= state_dim:
-                    if (
-                        candidate_arr.size % state_dim == 0
-                        and candidate_arr.size >= 2 * state_dim
-                    ):
-                        candidate_arr = candidate_arr.reshape(-1, state_dim)
-                        return candidate_arr[-1]
-                    return candidate_arr[:state_dim]
+        condition_array = np.asarray(condition, dtype=float)
+        if condition_array.ndim == 1:
+            condition_array = condition_array.reshape(1, -1)
+        elif condition_array.ndim != 2:
+            condition_array = condition_array.reshape(condition_array.shape[0], -1)
 
-        last = list(conditions.values())[-1]
-        if isinstance(last, (list, tuple, np.ndarray)):
-            last_arr = np.asarray(last, dtype=float)
-            if last_arr.size >= state_dim:
-                if (
-                    last_arr.size % state_dim == 0
-                    and last_arr.size >= 2 * state_dim
-                ):
-                    last_arr = last_arr.reshape(-1, state_dim)
-                    return last_arr[-1]
-                return last_arr[:state_dim]
-    return np.zeros((state_dim,), dtype=float)
+        if batch_size is not None:
+            if condition_array.shape[0] == 1:
+                condition_array = np.repeat(condition_array, batch_size, axis=0)
+            elif condition_array.shape[0] != batch_size:
+                condition_array = condition_array[:batch_size]
+
+        return condition_array
 
 
-def _model_condition_dim(model: object, state_dim: int) -> int:
-    condition_dim = getattr(model, "condition_dim", None)
-    if isinstance(condition_dim, (int, np.integer)) and condition_dim > 0:
-        return int(condition_dim)
-    return int(state_dim)
+class ModelPredictor:
+    """Tiny adapter for model inference during sampling."""
 
+    def __init__(self, *, model: object | None = None) -> None:
+        self.model = model
 
-def _as_torch_tensor(value: np.ndarray) -> torch.Tensor:
-    return torch.as_tensor(value, dtype=torch.float32)
+    @staticmethod
+    def _as_torch_tensor(value: np.ndarray) -> torch.Tensor:
+        return torch.as_tensor(value, dtype=torch.float32)
 
+    def _to_condition_matrix(
+        self,
+        condition: dict[object, object] | None,
+        batch_size: int,
+        fallback_dim: int,
+    ) -> np.ndarray | None:
+        return ConditionAdapter.to_matrix(
+            condition,
+            batch_size=batch_size,
+            fallback_dim=fallback_dim,
+        )
 
-def _to_condition_matrix(
-    condition: object, batch_size: int | None, fallback_dim: int | None = None
-) -> np.ndarray | None:
-    if condition is None:
-        return None
-    if isinstance(condition, dict):
-        if fallback_dim is None:
-            raise ValueError("fallback_dim is required when condition is a mapping")
-        condition = _to_condition_vector(condition, fallback_dim)
+    def _model_condition_dim(self, state_dim: int) -> int:
+        condition_dim = getattr(self.model, "condition_dim", None)
+        if isinstance(condition_dim, (int, np.integer)) and condition_dim > 0:
+            return int(condition_dim)
+        return int(state_dim)
 
-    condition_array = np.asarray(condition, dtype=float)
-    if condition_array.ndim == 1:
-        condition_array = condition_array.reshape(1, -1)
-    elif condition_array.ndim != 2:
-        condition_array = condition_array.reshape(condition_array.shape[0], -1)
+    def predict(
+        self,
+        x: np.ndarray,
+        t: np.ndarray,
+        condition: dict[object, object] | None,
+    ) -> np.ndarray:
+        if self.model is None:
+            return np.zeros_like(x)
 
-    if batch_size is not None:
-        if condition_array.shape[0] == 1:
-            condition_array = np.repeat(condition_array, batch_size, axis=0)
-        elif condition_array.shape[0] != batch_size:
-            condition_array = condition_array[:batch_size]
-    return condition_array
+        if hasattr(self.model, "predict_numpy"):
+            return np.asarray(self.model.predict_numpy(x, t, condition), dtype=float)
 
+        if hasattr(self.model, "forward"):
+            with torch.no_grad():  # type: ignore[operator]
+                model_input = self._as_torch_tensor(x)
+                t_tensor = torch.as_tensor(t, dtype=torch.long)
+                condition_array = self._to_condition_matrix(
+                    condition,
+                    batch_size=x.shape[0],
+                    fallback_dim=self._model_condition_dim(x.shape[-1]),
+                )
+                condition_tensor = None
+                if condition_array is not None:
+                    condition_tensor = self._as_torch_tensor(condition_array).to(
+                        dtype=model_input.dtype,
+                        device=model_input.device,
+                    )
+                outputs = self.model(model_input, t_tensor, condition_tensor)  # type: ignore[misc]
+                return np.asarray(outputs.detach().cpu().numpy(), dtype=float)
 
-def _model_predict_numpy(
-    model: object, x: np.ndarray, t: np.ndarray, condition: dict[object, object] | None
-) -> np.ndarray:
-    if model is None:
         return np.zeros_like(x, dtype=float)
 
-    # Prefer explicit numpy inference method when available.
-    if hasattr(model, "predict_numpy"):
-        return np.asarray(model.predict_numpy(x, t, condition), dtype=float)
 
-    if hasattr(model, "forward"):
-        with torch.no_grad():  # type: ignore[operator]
-            model_input = _as_torch_tensor(x)
-            t_tensor = torch.as_tensor(t, dtype=torch.long)
-            condition_array = _to_condition_matrix(
-                condition,
-                batch_size=x.shape[0],
-                fallback_dim=_model_condition_dim(model, x.shape[-1]),
-            )
-            condition_tensor = None
-            if condition_array is not None:
-                condition_tensor = _as_torch_tensor(condition_array).to(
-                    dtype=model_input.dtype,
-                    device=model_input.device,
-                )
-            outputs = model(model_input, t_tensor, condition_tensor)  # type: ignore[misc]
-            return np.asarray(outputs.detach().cpu().numpy(), dtype=float)
+class GuidancePolicy:
+    """Reusable guidance policy with optional differentiable model term."""
 
-    return np.zeros_like(x, dtype=float)
-
-
-class ValueGuide:
-    """Small goal-directed guide used during sampling."""
-
-    def __init__(self, model: object | None = None, verbose: bool = False, **_: object) -> None:
+    def __init__(
+        self,
+        model: object | None = None,
+        verbose: bool = False,
+        *,
+        fallback_scale: float = 1.0,
+    ) -> None:
         self.model = model
         self.verbose = verbose
-        self._fallback_scale = 1.0
+        self._fallback_scale = float(fallback_scale)
 
     def __call__(
         self,
@@ -139,33 +172,68 @@ class ValueGuide:
             return model_guidance
         return target
 
+    @staticmethod
+    def _target_goal_vector(condition: dict[object, object] | None, state_dim: int) -> np.ndarray:
+        return ConditionAdapter.to_vector(condition, state_dim)
+
     def _fallback_target(
-        self, x: np.ndarray, condition: dict[object, object] | None, state_dim: int
+        self,
+        x: np.ndarray,
+        condition: dict[object, object] | None,
+        state_dim: int,
     ) -> np.ndarray:
-        goal = _to_condition_vector(condition, state_dim)
+        goal = self._target_goal_vector(condition, state_dim)
         if goal.size == 0:
             return np.zeros_like(x, dtype=float)
         goal_vector = goal.reshape((1, 1, -1))
         return np.clip((goal_vector - x) * self._fallback_scale, -1.0, 1.0)
 
+    def _model_condition_dim(self, state_dim: int) -> int:
+        condition_dim = getattr(self.model, "condition_dim", None)
+        if isinstance(condition_dim, (int, np.integer)) and condition_dim > 0:
+            return int(condition_dim)
+        return int(state_dim)
+
+    def _to_condition_matrix(
+        self,
+        condition: dict[object, object] | None,
+        batch_size: int,
+        state_dim: int,
+    ) -> np.ndarray | None:
+        if condition is None:
+            return None
+        fallback_dim = self._model_condition_dim(state_dim)
+        return ConditionAdapter.to_matrix(
+            condition,
+            batch_size=batch_size,
+            fallback_dim=fallback_dim,
+        )
+
     def _model_guidance(
-        self, x: np.ndarray, t: np.ndarray, condition: dict[object, object] | None
+        self,
+        x: np.ndarray,
+        t: np.ndarray,
+        condition: dict[object, object] | None,
     ) -> np.ndarray | None:
         if x.ndim != 3:
             return None
         if not callable(self.model):
             return None
 
-        x_tensor = _as_torch_tensor(x)
+        x_tensor = torch.as_tensor(x, dtype=torch.float32)
         x_tensor.requires_grad_(True)
-        condition_matrix = _to_condition_matrix(
+        condition_matrix = self._to_condition_matrix(
             condition,
             batch_size=x.shape[0],
-            fallback_dim=_model_condition_dim(self.model, x.shape[-1]),
+            state_dim=x.shape[-1],
         )
         condition_tensor: torch.Tensor | None = None
         if condition_matrix is not None:
-            condition_tensor = torch.as_tensor(condition_matrix, dtype=x_tensor.dtype, device=x_tensor.device)
+            condition_tensor = torch.as_tensor(
+                condition_matrix,
+                dtype=x_tensor.dtype,
+                device=x_tensor.device,
+            )
             if condition_tensor.ndim == 1:
                 condition_tensor = condition_tensor.reshape(1, -1)
             if condition_tensor.shape[0] == 1:
@@ -188,67 +256,93 @@ class ValueGuide:
             return None
 
 
-def n_step_guided_p_sample(
-    model: object,
-    *,
-    sample_shape: tuple[int, int, int],
-    schedule: DiffusionSchedule,
-    guide: ValueGuide | None = None,
-    condition: dict[object, object] | None = None,
-    n_guide_steps: int = 2,
-    verbose: bool = False,
-    t_stopgrad: int = 2,
-    scale_grad_by_std: bool = True,
-    scale: float = 0.1,
-    seed: int | None = None,
-    **_: object,
-) -> np.ndarray:
-    """Generate a batch of guided trajectories.
+class DiffusionSamplingEngine:
+    """Core reverse-diffusion loop used by guided policy."""
 
-    This is intentionally lightweight and deterministic for planning usage.
-    """
-    rng = np.random.default_rng(seed)
-    trajectory = rng.normal(size=sample_shape)
+    def __init__(self, schedule: DiffusionSchedule, *, seed: int | None = None) -> None:
+        self.schedule = schedule
+        self.rng = np.random.default_rng(seed)
+        self.predictor = ModelPredictor()
+        self.guidance_policy = GuidancePolicy()
 
-    for step in range(schedule.n_diffusion_steps - 1, -1, -1):
-        t_index = np.full((sample_shape[0],), step, dtype=int)
+    def sample(
+        self,
+        model: object,
+        *,
+        sample_shape: tuple[int, int, int],
+        guide: object | None = None,
+        schedule: DiffusionSchedule | None = None,
+        condition: dict[object, object] | None = None,
+        n_guide_steps: int = 2,
+        verbose: bool = False,
+        t_stopgrad: int = 2,
+        scale_grad_by_std: bool = True,
+        scale: float = 0.1,
+        seed: int | None = None,
+        **_: object,
+    ) -> np.ndarray:
+        if seed is not None:
+            self.rng = np.random.default_rng(seed)
+        trajectory = self.rng.normal(size=sample_shape)
+        active_schedule = self.schedule if schedule is None else schedule
+        predictor = ModelPredictor(model=model)
+        guide_policy = guide if guide is not None else GuidancePolicy(model=None)
 
-        model_eps = _model_predict_numpy(model, trajectory, t_index, condition)
-        if model_eps.shape != trajectory.shape:
-            model_eps = np.zeros_like(trajectory)
+        for step in range(active_schedule.n_diffusion_steps - 1, -1, -1):
+            t_index = np.full((sample_shape[0],), step, dtype=int)
 
-        target = np.zeros_like(trajectory)
-        if guide is not None and step >= t_stopgrad:
-            for _ in range(max(1, n_guide_steps)):
-                target += guide(trajectory, t_index, condition)
-            target /= max(1.0, float(n_guide_steps))
+            model_eps = predictor.predict(trajectory, t_index, condition)
+            if model_eps.shape != trajectory.shape:
+                model_eps = np.zeros_like(trajectory)
 
-        if not np.isfinite(model_eps).all():
-            model_eps = np.zeros_like(trajectory)
-        if not np.isfinite(target).all():
             target = np.zeros_like(trajectory)
+            if guide_policy is not None and step >= t_stopgrad:
+                total = 0
+                for _ in range(max(1, n_guide_steps)):
+                    total += guide_policy(trajectory, t_index, condition)
+                target = np.asarray(total / max(1.0, float(n_guide_steps)))
 
-        alpha = float(schedule.alpha[step])
-        alpha_bar = float(schedule.alpha_bar[step])
-        beta = float(schedule.beta(step))
-        posterior_std = float(np.sqrt(max(1e-12, schedule.posterior_variance[step])))
+            if not np.isfinite(model_eps).all():
+                model_eps = np.zeros_like(trajectory)
+            if not np.isfinite(target).all():
+                target = np.zeros_like(trajectory)
 
-        trajectory = (trajectory - beta / np.sqrt(max(1e-12, 1.0 - alpha_bar)) * model_eps) / np.sqrt(
-            max(1e-12, alpha)
-        )
+            alpha = float(active_schedule.alpha[step])
+            alpha_bar = float(active_schedule.alpha_bar[step])
+            beta = float(active_schedule.beta(step))
+            posterior_std = float(np.sqrt(max(1e-12, active_schedule.posterior_variance[step])))
 
-        if guide is not None and step >= t_stopgrad:
-            effective_scale = scale / max(1.0, float(step + 1))
-            if scale_grad_by_std:
-                effective_scale /= posterior_std
-            trajectory = trajectory - effective_scale * target
+            den = np.sqrt(max(1e-12, 1.0 - alpha_bar))
+            trajectory = (
+                (trajectory - beta / den * model_eps) / np.sqrt(max(1e-12, alpha))
+            )
 
-        if step > 0:
-            trajectory = trajectory + posterior_std * rng.normal(size=sample_shape)
-        if verbose:
-            trajectory = np.asarray(trajectory)
+            if guide_policy is not None and step >= t_stopgrad:
+                effective_scale = scale / max(1.0, float(step + 1))
+                if scale_grad_by_std:
+                    effective_scale /= posterior_std
+                trajectory = trajectory - effective_scale * target
 
-    return np.asarray(trajectory, dtype=float)
+            if step > 0:
+                trajectory = trajectory + posterior_std * self.rng.normal(size=sample_shape)
+        return np.asarray(trajectory, dtype=float)
+
+
+class ValueGuide:
+    """Small goal-directed guide used during sampling."""
+
+    def __init__(self, model: object | None = None, verbose: bool = False, **_: object) -> None:
+        self.model = model
+        self.verbose = verbose
+        self._policy = GuidancePolicy(model=model, verbose=verbose)
+
+    def __call__(
+        self,
+        x: np.ndarray,
+        t: np.ndarray,
+        condition: dict[object, object] | None = None,
+    ) -> np.ndarray:
+        return self._policy(x, t, condition)
 
 
 class GuidedPolicy:
@@ -261,8 +355,9 @@ class GuidedPolicy:
         scale: float,
         diffusion_model: object,
         normalizer: PlannerStateNormalizer,
-        preprocess_fns: list[Callable[[dict[object, object] | None], dict[object, object]]] | None = None,
-        sample_fn: Callable[..., np.ndarray] = n_step_guided_p_sample,
+        preprocess_fns: list[Callable[[dict[object, object] | None], dict[object, object]]]
+        | None = None,
+        sample_fn: Callable[..., np.ndarray] | None = None,
         n_guide_steps: int = 2,
         t_stopgrad: int = 2,
         scale_grad_by_std: bool = True,
@@ -287,7 +382,9 @@ class GuidedPolicy:
         self.schedule = DiffusionSchedule.linear(
             n_diffusion_steps=int(getattr(diffusion_model, "n_diffusion_steps", 100))
         )
-        self._policy_meta = getattr(diffusion_model, "meta", {})
+        self._engine = DiffusionSamplingEngine(self.schedule)
+        if self.sample_fn is None:
+            self.sample_fn = self._engine.sample
 
     def _prepare_conditions(
         self, conditions: dict[object, object] | None
@@ -297,26 +394,44 @@ class GuidedPolicy:
             prepared = fn(prepared)  # type: ignore[assignment]
         return prepared
 
+    def _sample(
+        self,
+        conditions: dict[object, object] | None,
+        batch_size: int,
+        verbose: bool,
+    ) -> np.ndarray:
+        prepared = self._prepare_conditions(conditions)
+        sample_kwargs = {
+            "sample_shape": (batch_size, self.horizon, self.state_dim),
+            "schedule": self.schedule,
+            "guide": self.guide,
+            "condition": prepared,
+            "n_guide_steps": self.n_guide_steps,
+            "t_stopgrad": self.t_stopgrad,
+            "scale_grad_by_std": self.scale_grad_by_std,
+            "scale": self.scale,
+            "verbose": verbose or self.verbose,
+        }
+        return self.sample_fn(self.diffusion_model, **sample_kwargs)
+
     def __call__(
         self,
         conditions: dict[object, object],
         batch_size: int,
         verbose: bool = False,
     ) -> SimpleNamespace:
-        prepared = self._prepare_conditions(conditions)
-        raw = self.sample_fn(
-            self.diffusion_model,
-            sample_shape=(batch_size, self.horizon, self.state_dim),
-            schedule=self.schedule,
-            guide=self.guide,
-            condition=prepared,
-            n_guide_steps=self.n_guide_steps,
-            t_stopgrad=self.t_stopgrad,
-            scale_grad_by_std=self.scale_grad_by_std,
-            scale=self.scale,
-            verbose=verbose or self.verbose,
-        )
+        raw = self._sample(conditions, batch_size=batch_size, verbose=verbose)
         if raw.shape[-1] != self.state_dim:
             raw = raw[..., : self.state_dim]
         observations = self.normalizer.denormalize(raw)
         return SimpleNamespace(observations=observations)
+
+
+__all__ = [
+    "ValueGuide",
+    "GuidedPolicy",
+    "ConditionAdapter",
+    "ModelPredictor",
+    "GuidancePolicy",
+    "DiffusionSamplingEngine",
+]

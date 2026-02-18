@@ -147,30 +147,25 @@ def _build_diffusion_policy(
 ) -> object:
     """Build diffusion policy from local checkpoints."""
     try:
-        from planning.diffusion import check_compatibility, load_diffusion
-        from planning.diffusion.sampling import GuidedPolicy, ValueGuide, n_step_guided_p_sample
+        from planning.diffusion import check_compatibility
+        from planning.diffusion.utils import CheckpointCatalog, DiffusionArtifactLoader
+        from planning.diffusion.sampling import GuidedPolicy, ValueGuide
     except Exception as exc:
         raise RuntimeError(
             "Optional diffuser dependencies are required. "
             "Install with `uv sync --extra diffuser`."
         ) from exc
 
-    diffusion_experiment = load_diffusion(
-        loadbase=loadbase,
-        dataset=dataset,
-        loadpath=diffusion_loadpath,
-        epoch=diffusion_epoch,
+    diffusion_loader = DiffusionArtifactLoader(
+        CheckpointCatalog(loadbase, dataset=dataset, loadpath=diffusion_loadpath, config=config),
         seed=seed,
-        config=config,
     )
-    value_experiment = load_diffusion(
-        loadbase=loadbase,
-        dataset=dataset,
-        loadpath=value_loadpath,
-        epoch=value_epoch,
+    value_loader = DiffusionArtifactLoader(
+        CheckpointCatalog(loadbase, dataset=dataset, loadpath=value_loadpath, config=config),
         seed=seed,
-        config=config,
     )
+    diffusion_experiment = diffusion_loader.load(diffusion_epoch)
+    value_experiment = value_loader.load(value_epoch)
     check_compatibility(diffusion_experiment, value_experiment)
 
     guide = ValueGuide(model=value_experiment.ema, verbose=False)
@@ -180,7 +175,6 @@ def _build_diffusion_policy(
         diffusion_model=diffusion_experiment.ema,
         normalizer=diffusion_experiment.dataset.normalizer,
         preprocess_fns=[],
-        sample_fn=n_step_guided_p_sample,
         n_guide_steps=n_guide_steps,
         t_stopgrad=2,
         scale_grad_by_std=True,

@@ -6,22 +6,14 @@ import importlib
 import json
 import logging
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import torch  # type: ignore
+import yaml  # type: ignore
 
 from .core import DiffusionDataset, DiffusionExperiment, PlannerStateNormalizer
-
-try:  # pragma: no cover - optional at runtime
-    import torch  # type: ignore
-except Exception:  # pragma: no cover
-    torch = None
-
-try:  # pragma: no cover - optional, only when yaml config files are used
-    import yaml  # type: ignore
-except Exception:  # pragma: no cover
-    yaml = None
-
 
 _CHECKPOINT_FILE_RE = re.compile(r"epoch_(\d+)\.ckpt")
 _CKPT_FILE_RE = re.compile(r"ckpt_(\d+)\.pt")
@@ -100,11 +92,6 @@ def _load_yaml_templating_context(
         raise FileNotFoundError(f"Config file not found: {config_path}")
     if not path.is_file():
         raise FileNotFoundError(f"Config path is not a file: {config_path}")
-    if yaml is None:
-        raise ImportError(
-            "Diffuser YAML support requires PyYAML. Install with `uv sync --extra diffuser`."
-        )
-
     payload = yaml.safe_load(path.read_text(encoding="utf-8"))
     if payload is None:
         payload = {}
@@ -295,25 +282,29 @@ def _resolve_template_path(
     dataset: str,
     config: str | None = None,
     loadbase: str | None = None,
+    fallback: dict[str, object] | None = None,
 ) -> str:
     """Resolve ``f:...`` style templates into concrete relative paths."""
+    if fallback is None:
+        fallback = _TEMPLATE_CONTEXT_FALLBACK
+
     if not template.startswith("f:"):
         return template
 
-    context: dict[str, object] = {"dataset": dataset, **_TEMPLATE_CONTEXT_FALLBACK}
+    context: dict[str, object] = {"dataset": dataset, **fallback}
     template_body = template[2:]
     if config is not None:
         context = _load_templating_context(
             config,
             dataset,
-            fallback=_TEMPLATE_CONTEXT_FALLBACK,
+            fallback=fallback,
         )
     elif loadbase is not None:
         context = _infer_template_context_from_disk(
             loadbase=loadbase,
             dataset=dataset,
             template_body=template_body,
-            fallback=_TEMPLATE_CONTEXT_FALLBACK,
+            fallback=fallback,
         ) or context
 
     context["H"] = context["horizon"]
@@ -407,7 +398,8 @@ def _resolve_checkpoint_file(  # noqa: C901
     roots = _candidate_checkpoint_root(loadbase, dataset, resolved)
     if not roots:
         raise FileNotFoundError(
-            f"Could not resolve checkpoint root for loadbase={loadbase!r}, dataset={dataset!r}, loadpath={loadpath!r}"
+            "Could not resolve checkpoint root for "
+            f"loadbase={loadbase!r}, dataset={dataset!r}, loadpath={loadpath!r}"
         )
 
     root = roots[0]
@@ -450,10 +442,6 @@ def _resolve_checkpoint_file(  # noqa: C901
 
 def _load_checkpoint(file_path: Path) -> dict[str, object]:
     if file_path.suffix.lower() in {".pt", ".ckpt"}:
-        if torch is None:
-            raise ImportError(
-                "torch is required to load checkpoint files. Install the diffuser extra."
-            )
         try:
             return torch.load(file_path, map_location="cpu")
         except Exception as exc:
@@ -471,101 +459,246 @@ def _load_checkpoint(file_path: Path) -> dict[str, object]:
 
 
 def _load_model_from_payload(payload: dict[str, object], expected: str) -> object:
-    if torch is None:
-        raise ImportError(
-            "torch is required for loading model checkpoints. Install diffusers-local extra."
+    return ModelPayloadLoader(expected).load(payload)
+
+
+@dataclass(frozen=True)
+class _ResolvedModelDescriptor:
+    module_path: str
+    class_name: str
+
+
+class ModelPayloadLoader:
+    """Load model class and state from persisted payload."""
+
+    def __init__(self, expected: str) -> None:
+        self.expected = expected
+
+    @staticmethod
+    def _extract_descriptor(payload: dict[str, object]) -> _ResolvedModelDescriptor:
+        model_class_path = payload.get("model_class_path", "")
+        if not model_class_path:
+            raise ValueError("Checkpoint missing 'model_class_path'")
+        module_path, _, class_name = model_class_path.rpartition(".")
+        if not module_path:
+            raise ValueError("Invalid model_class_path in checkpoint payload.")
+        return _ResolvedModelDescriptor(module_path=module_path, class_name=class_name)
+
+    def _resolve_module(self, module_path: str) -> object:
+        try:
+            return importlib.import_module(module_path)
+        except ModuleNotFoundError:
+            return importlib.import_module(_normalize_legacy_module_path(module_path))
+
+    @staticmethod
+    def _normalize_class_name(class_name: str) -> str:
+        for suffix in ("DiffusionModel", "SimpleDiffusionModel", "ValueModel", "SimpleValueModel"):
+            if class_name.endswith(suffix):
+                return suffix
+        return class_name
+
+    def _load_model_cls(
+        self, payload: dict[str, object], descriptor: _ResolvedModelDescriptor
+    ) -> object:
+        normalized_name = self._normalize_class_name(descriptor.class_name)
+        if normalized_name in {"DiffusionModel", "SimpleDiffusionModel"}:
+            from .model import SimpleDiffusionModel
+
+            model_kwargs = payload.get("model_kwargs", {})
+            return SimpleDiffusionModel.create(**model_kwargs)  # type: ignore[misc]
+        if normalized_name in {"ValueModel", "SimpleValueModel"}:
+            from .model import SimpleValueModel
+
+            model_kwargs = payload.get("model_kwargs", {})
+            return SimpleValueModel.create(**model_kwargs)  # type: ignore[misc]
+
+        module = self._resolve_module(descriptor.module_path)
+        model_kwargs = payload.get("model_kwargs", {})
+        model_cls = getattr(module, normalized_name)
+        return model_cls(**model_kwargs)  # type: ignore[misc]
+
+    @staticmethod
+    def _load_state_dict(payload: dict[str, object]) -> object:
+        state = payload.get("ema_state_dict") or payload.get("model_state_dict")
+        if state is None:
+            state = payload.get("state_dict")
+        if not state:
+            raise ValueError("Checkpoint missing model state dict")
+        return state
+
+    def load(self, payload: dict[str, object]) -> object:
+        descriptor = self._extract_descriptor(payload)
+        model = self._load_model_cls(payload, descriptor)
+        state = self._load_state_dict(payload)
+        missing, unexpected = model.load_state_dict(state, strict=False)  # type: ignore[arg-type]
+        if missing:
+            raise ValueError(
+                f"Checkpoint has missing keys for {self.expected} model: {missing}"
+            )
+        if unexpected:
+            # Incompatible but still usable for strict local workflows.
+            pass
+        model.eval()
+        return model
+
+
+class TemplatingContextResolver:
+    """Resolve checkpoint template variables with fallback semantics."""
+
+    def __init__(self, fallback: dict[str, object] | None = None) -> None:
+        self.fallback = dict(_TEMPLATE_CONTEXT_FALLBACK)
+        if fallback:
+            self.fallback.update(fallback)
+
+    def resolve(
+        self,
+        template: str,
+        *,
+        dataset: str,
+        config: str | None = None,
+        loadbase: str | None = None,
+    ) -> str:
+        return _resolve_template_path(
+            template,
+            dataset=dataset,
+            config=config,
+            loadbase=loadbase,
+            fallback=self.fallback,
         )
 
-    model_class_path = payload.get("model_class_path", "")
-    if not model_class_path:
-        raise ValueError("Checkpoint missing 'model_class_path'")
-    module_path, _, class_name = model_class_path.rpartition(".")
-    try:
-        module = importlib.import_module(module_path)
-    except ModuleNotFoundError:
-        module = importlib.import_module(_normalize_legacy_module_path(module_path))
-    model_kwargs = payload.get("model_kwargs", {})
-    for suffix in ("DiffusionModel", "SimpleDiffusionModel", "ValueModel", "SimpleValueModel"):
-        if class_name.endswith(suffix):
-            class_name = suffix
-            break
 
-    if class_name in {"DiffusionModel", "SimpleDiffusionModel"}:
-        from .model import SimpleDiffusionModel
+class CheckpointResolver:
+    """Resolve checkpoint file paths from catalog + epoch spec."""
 
-        model = SimpleDiffusionModel.create(**model_kwargs)  # type: ignore[misc]
-    elif class_name in {"ValueModel", "SimpleValueModel"}:
-        from .model import SimpleValueModel
+    def __init__(self, catalog: CheckpointCatalog) -> None:
+        self.catalog = catalog
 
-        model = SimpleValueModel.create(**model_kwargs)  # type: ignore[misc]
-    else:
-        model_cls = getattr(module, class_name)
-        model = model_cls(**model_kwargs)  # type: ignore[misc]
-    state = payload.get("ema_state_dict") or payload.get("model_state_dict")
-    if state is None:
-        state = payload.get("state_dict")
-    if not state:
-        raise ValueError("Checkpoint missing model state dict")
-    missing, unexpected = model.load_state_dict(state, strict=False)
-    if missing:
-        raise ValueError(f"Checkpoint has missing keys for {expected} model: {missing}")
-    if unexpected:
-        # Incompatible but still usable for strict local workflows.
-        pass
-    model.eval()
-    return model
+    @property
+    def root(self) -> Path:
+        return self.catalog.root
 
+    @property
+    def candidates(self) -> list[tuple[int, Path]]:
+        return self.catalog.candidates()
 
-def load_diffusion(
-    loadbase: str,
-    dataset: str,
-    loadpath: str,
-    *,
-    epoch: str | int = "latest",
-    seed: int | None = None,
-    config: str | None = None,
-) -> DiffusionExperiment:
-    """Load a locally saved diffusion checkpoint and return an experiment wrapper."""
-    checkpoint_file = _resolve_checkpoint_file(loadbase, dataset, loadpath, epoch, config)
-    payload = _load_checkpoint(checkpoint_file)
+    @property
+    def dataset(self) -> str:
+        return self.catalog.dataset
 
-    if seed is not None and torch is not None:
-        torch.manual_seed(seed)
+    @property
+    def loadbase(self) -> str:
+        return self.catalog.loadbase
 
-    meta = dict(payload.get("meta", {}))
-    meta["path"] = str(checkpoint_file)
-    normalizer_payload = payload.get("normalizer")
-    if normalizer_payload is None:
-        state_dim = int(meta.get("state_dim", 3))
-        normalizer = PlannerStateNormalizer.identity(state_dim)
-    else:
-        normalizer = PlannerStateNormalizer.from_dict(normalizer_payload)
+    @property
+    def loadpath(self) -> str:
+        return self.catalog.loadpath
 
-    horizon = int(meta.get("horizon", 64))
-    state_dim = int(meta.get("state_dim", normalizer.mean.shape[0]))
-    dataset_name = str(meta.get("dataset", dataset))
-    model = _load_model_from_payload(payload, expected="DiffusionExperiment")
-    model.horizon = int(getattr(model, "horizon", horizon))
-    model.state_dim = int(getattr(model, "state_dim", state_dim))
-    if seed is not None and hasattr(model, "set_seed"):
-        model.set_seed(seed)
-    if hasattr(model, "meta"):
-        merged_meta = dict(model.meta)
-        merged_meta.update(meta)
-        model.meta = merged_meta
-    else:
-        model.meta = meta
+    @property
+    def config(self) -> str | None:
+        return self.catalog.config
 
-    payload_dataset = DiffusionDataset(
-        name=dataset_name,
-        normalizer=normalizer,
-        horizon=horizon,
-        state_dim=state_dim,
-    )
-    return DiffusionExperiment(ema=model, dataset=payload_dataset, meta=meta)
+    def resolve(self, epoch: str | int) -> Path:
+        return _resolve_checkpoint_file(
+            self.loadbase,
+            self.dataset,
+            self.loadpath,
+            epoch,
+            self.config,
+        )
 
 
-def check_compatibility(diffusion_experiment: DiffusionExperiment, value_experiment: DiffusionExperiment) -> None:
+class CheckpointCatalog:
+    """Resolve checkpoint root and enumerate candidates."""
+
+    def __init__(
+        self,
+        loadbase: str,
+        dataset: str,
+        loadpath: str,
+        config: str | None = None,
+    ) -> None:
+        self.loadbase = loadbase
+        self.dataset = dataset
+        self.loadpath = loadpath
+        self.config = config
+        self.template_resolver = TemplatingContextResolver(_TEMPLATE_CONTEXT_FALLBACK)
+
+    @property
+    def root(self) -> Path:
+        resolved = self.template_resolver.resolve(
+            self.loadpath,
+            dataset=self.dataset,
+            config=self.config,
+            loadbase=self.loadbase,
+        )
+        roots = _candidate_checkpoint_root(self.loadbase, self.dataset, resolved)
+        if not roots:
+            raise FileNotFoundError(
+                f"Could not resolve checkpoint root for loadbase={self.loadbase!r}, "
+                f"dataset={self.dataset!r}, loadpath={self.loadpath!r}"
+            )
+        return roots[0]
+
+    def candidates(self) -> list[tuple[int, Path]]:
+        if self.root.is_file():
+            return []
+        return _collect_checkpoint_files(self.root)
+
+
+class DiffusionArtifactLoader:
+    """Load checkpoints into DiffusionExperiment objects."""
+
+    def __init__(self, catalog: CheckpointCatalog, *, seed: int | None = None) -> None:
+        self.catalog = catalog
+        self.seed = seed
+
+    def resolve(self, epoch: str | int) -> Path:
+        resolver = CheckpointResolver(self.catalog)
+        return resolver.resolve(epoch)
+
+    def load(self, epoch: str | int = "latest") -> DiffusionExperiment:
+        checkpoint_file = self.resolve(epoch)
+        payload = _load_checkpoint(checkpoint_file)
+
+        if self.seed is not None:
+            torch.manual_seed(self.seed)
+
+        meta = dict(payload.get("meta", {}))
+        meta["path"] = str(checkpoint_file)
+        normalizer_payload = payload.get("normalizer")
+        if normalizer_payload is None:
+            state_dim = int(meta.get("state_dim", 3))
+            normalizer = PlannerStateNormalizer.identity(state_dim)
+        else:
+            normalizer = PlannerStateNormalizer.from_dict(normalizer_payload)
+
+        horizon = int(meta.get("horizon", 64))
+        state_dim = int(meta.get("state_dim", normalizer.mean.shape[0]))
+        dataset_name = str(meta.get("dataset", self.catalog.dataset))
+        model = _load_model_from_payload(payload, expected="DiffusionExperiment")
+        model.horizon = int(getattr(model, "horizon", horizon))
+        model.state_dim = int(getattr(model, "state_dim", state_dim))
+        if self.seed is not None and hasattr(model, "set_seed"):
+            model.set_seed(self.seed)
+        if hasattr(model, "meta"):
+            merged_meta = dict(model.meta)
+            merged_meta.update(meta)
+            model.meta = merged_meta
+        else:
+            model.meta = meta
+
+        payload_dataset = DiffusionDataset(
+            name=dataset_name,
+            normalizer=normalizer,
+            horizon=horizon,
+            state_dim=state_dim,
+        )
+        return DiffusionExperiment(ema=model, dataset=payload_dataset, meta=meta)
+
+
+def check_compatibility(
+    diffusion_experiment: DiffusionExperiment, value_experiment: DiffusionExperiment
+) -> None:
     """Validate state dimension and horizon compatibility."""
     if diffusion_experiment.dataset.state_dim != value_experiment.dataset.state_dim:
         raise ValueError(
@@ -578,7 +711,10 @@ def check_compatibility(diffusion_experiment: DiffusionExperiment, value_experim
             f"{diffusion_experiment.dataset.horizon} vs {value_experiment.dataset.horizon}"
         )
 
-    if diffusion_experiment.dataset.normalizer.mean.shape != value_experiment.dataset.normalizer.mean.shape:
+    if (
+        diffusion_experiment.dataset.normalizer.mean.shape
+        != value_experiment.dataset.normalizer.mean.shape
+    ):
         raise ValueError("Diffusion/value normalizer shape mismatch.")
 
 
