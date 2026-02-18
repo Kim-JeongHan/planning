@@ -27,6 +27,14 @@ _CHECKPOINT_FILE_RE = re.compile(r"epoch_(\d+)\.ckpt")
 _CKPT_FILE_RE = re.compile(r"ckpt_(\d+)\.pt")
 _LATEST_CKPT_FILE_RE = re.compile(r"latest\.ckpt")
 _BEST_CKPT_FILE_RE = re.compile(r"best\.ckpt")
+_TEMPLATE_TOKEN_RE = re.compile(r"\{(\w+)\}")
+_TEMPLATE_CONTEXT_FALLBACK: dict[str, object] = {
+    "horizon": 64,
+    "n_diffusion_steps": 100,
+    "discount": 0.99,
+    "H": 64,
+    "T": 100,
+}
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -84,7 +92,9 @@ def _select_best_checkpoint_by_loss(candidates: list[tuple[int, Path]]) -> Path 
     return None
 
 
-def _load_yaml_templating_context(config_path: str, fallback: dict[str, float | int]) -> dict[str, object]:
+def _load_yaml_templating_context(
+    config_path: str, fallback: dict[str, object]
+) -> dict[str, object]:
     path = Path(config_path).expanduser()
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
@@ -118,14 +128,18 @@ def _load_yaml_templating_context(config_path: str, fallback: dict[str, float | 
 
 
 def _load_python_templating_context(
-    python_path: Path, fallback: dict[str, float | int]
+    python_path: Path, fallback: dict[str, object]
 ) -> dict[str, object]:
     """Load templating variables from a Python module file."""
     spec = importlib.util.spec_from_file_location(
         f"_diffuser_template_{python_path.stem}_{id(python_path)}", python_path
     )
     if spec is None or spec.loader is None:
-        return {"horizon": fallback["horizon"], "n_diffusion_steps": fallback["n_diffusion_steps"], "discount": fallback["discount"]}
+        return {
+            "horizon": fallback["horizon"],
+            "n_diffusion_steps": fallback["n_diffusion_steps"],
+            "discount": fallback["discount"],
+        }
 
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)  # type: ignore[union-attr]
@@ -168,7 +182,7 @@ def _normalize_legacy_module_path(module_path: str) -> str:
 
 
 def _load_templating_context(
-    config: str | None, dataset: str, *, fallback: dict[str, float | int]
+    config: str | None, dataset: str, *, fallback: dict[str, object]
 ) -> dict[str, object]:
     if config is None:
         return {"dataset": dataset, **fallback}
@@ -200,28 +214,110 @@ def _load_templating_context(
         return {"dataset": dataset, **fallback}
 
     module = importlib.import_module(config)
-    attrs = [name for name in ("horizon", "n_diffusion_steps", "discount") if hasattr(module, name)]
+    attrs = [
+        name
+        for name in ("horizon", "n_diffusion_steps", "discount")
+        if hasattr(module, name)
+    ]
     context = {"dataset": dataset, **fallback}
     for name in attrs:
         context[name] = getattr(module, name)
     return context
 
 
+def _template_to_glob_pattern(template_body: str) -> str:
+    return _TEMPLATE_TOKEN_RE.sub("*", template_body)
+
+
+def _template_to_regex(template_body: str) -> re.Pattern[str]:
+    parts = _TEMPLATE_TOKEN_RE.split(template_body)
+    regex_parts: list[str] = []
+    for index, part in enumerate(parts):
+        if index % 2 == 0:
+            regex_parts.append(re.escape(part))
+        else:
+            regex_parts.append(rf"(?P<{part}>[^/]+)")
+    return re.compile(r"^" + "".join(regex_parts) + r"$")
+
+
+def _infer_template_context_from_disk(
+    *,
+    loadbase: str,
+    dataset: str,
+    template_body: str,
+    fallback: dict[str, object],
+) -> dict[str, object] | None:
+    """Infer template values from existing checkpoint directories under loadbase/dataset."""
+    base = Path(loadbase) / dataset
+    if not base.exists() or not base.is_dir():
+        return None
+
+    pattern = _template_to_glob_pattern(template_body)
+    pattern_re = _template_to_regex(template_body)
+    candidates = sorted(base.glob(pattern))
+    if not candidates:
+        return None
+
+    for candidate in candidates:
+        relative = candidate.relative_to(base).as_posix()
+        match = pattern_re.fullmatch(relative)
+        if match is None:
+            continue
+
+        context: dict[str, object] = {"dataset": dataset, **fallback}
+        try:
+            values = match.groupdict()
+            if "horizon" in values and values["horizon"] is not None:
+                context["horizon"] = int(values["horizon"])
+                context["H"] = int(values["horizon"])
+            if "H" in values and values["H"] is not None:
+                context["horizon"] = int(values["H"])
+                context["H"] = int(values["H"])
+            if "n_diffusion_steps" in values and values["n_diffusion_steps"] is not None:
+                context["n_diffusion_steps"] = int(values["n_diffusion_steps"])
+                context["T"] = int(values["n_diffusion_steps"])
+            if "T" in values and values["T"] is not None:
+                context["n_diffusion_steps"] = int(values["T"])
+                context["T"] = int(values["T"])
+            if "discount" in values and values["discount"] is not None:
+                context["discount"] = float(values["discount"])
+        except ValueError:
+            continue
+
+        return context
+
+    return None
+
+
 def _resolve_template_path(
-    template: str, *, dataset: str, config: str | None = None
+    template: str,
+    *,
+    dataset: str,
+    config: str | None = None,
+    loadbase: str | None = None,
 ) -> str:
     """Resolve ``f:...`` style templates into concrete relative paths."""
     if not template.startswith("f:"):
         return template
 
-    context = _load_templating_context(
-        config,
-        dataset,
-        fallback={"horizon": 64, "n_diffusion_steps": 100, "discount": 0.99, "H": 64, "T": 100},
-    )
+    context: dict[str, object] = {"dataset": dataset, **_TEMPLATE_CONTEXT_FALLBACK}
+    template_body = template[2:]
+    if config is not None:
+        context = _load_templating_context(
+            config,
+            dataset,
+            fallback=_TEMPLATE_CONTEXT_FALLBACK,
+        )
+    elif loadbase is not None:
+        context = _infer_template_context_from_disk(
+            loadbase=loadbase,
+            dataset=dataset,
+            template_body=template_body,
+            fallback=_TEMPLATE_CONTEXT_FALLBACK,
+        ) or context
+
     context["H"] = context["horizon"]
     context["T"] = context["n_diffusion_steps"]
-    template_body = template[2:]
     try:
         return template_body.format(**context)
     except KeyError as exc:
@@ -305,7 +401,9 @@ def _resolve_checkpoint_file(  # noqa: C901
     epoch: str | int,
     config: str | None,
 ) -> Path:
-    resolved = _resolve_template_path(loadpath, dataset=dataset, config=config)
+    resolved = _resolve_template_path(
+        loadpath, dataset=dataset, config=config, loadbase=loadbase
+    )
     roots = _candidate_checkpoint_root(loadbase, dataset, resolved)
     if not roots:
         raise FileNotFoundError(

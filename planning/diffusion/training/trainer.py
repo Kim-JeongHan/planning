@@ -352,8 +352,6 @@ def train(  # noqa: C901
         beta_end=2e-2,
     )
     diffusion_optimizer = torch.optim.AdamW(diffusion_model.parameters(), lr=config.learning_rate)
-    diffuse_log_every = _coerce_log_every(config.epochs, log_every)
-
     diffusion_ckpts = []
     diffusion_best_loss: float | None = None
     diffusion_best_epoch: int | None = None
@@ -364,6 +362,7 @@ def train(  # noqa: C901
         effective_diffusion_epochs = min(effective_diffusion_epochs, diffusion_max_epochs)
     if effective_diffusion_epochs <= 0:
         raise ValueError("diffusion_max_epochs / epochs must be at least 1.")
+    diffuse_log_every = _coerce_log_every(effective_diffusion_epochs, log_every)
 
     diffusion_patience, diffusion_min_delta = _coerce_stop_arguments(
         patience=diffusion_patience, min_delta=diffusion_min_delta, name="diffusion"
@@ -396,7 +395,7 @@ def train(  # noqa: C901
             config.learning_rate,
             config.lr_schedule,
             epoch,
-            total_epochs=config.epochs,
+            total_epochs=effective_diffusion_epochs,
             step_size=config.lr_step_size,
             gamma=config.lr_gamma,
             lr_min=config.lr_min,
@@ -431,7 +430,11 @@ def train(  # noqa: C901
                 "lr": _format_lr(current_lr),
             }
         )
-        if epoch % diffuse_log_every == 0 or epoch == 1 or epoch == config.epochs:
+        if (
+            epoch % diffuse_log_every == 0
+            or epoch == 1
+            or epoch == effective_diffusion_epochs
+        ):
             best_label = (
                 ""
                 if diffusion_best_loss is None
@@ -514,7 +517,6 @@ def train(  # noqa: C901
         condition_dim=condition_dim,
     )
     value_optimizer = torch.optim.AdamW(value_model.parameters(), lr=config.learning_rate)
-    value_log_every = _coerce_log_every(config.epochs, log_every)
     effective_value_epochs = config.epochs if train_value else 0
     if value_max_epochs is not None and value_max_epochs < 0:
         raise ValueError("value_max_epochs must be >= 0.")
@@ -522,6 +524,7 @@ def train(  # noqa: C901
         effective_value_epochs = min(effective_value_epochs, value_max_epochs)
     if effective_value_epochs < 1:
         return diffusion_ckpts
+    value_log_every = _coerce_log_every(effective_value_epochs, log_every)
 
     value_latest_ckpt = build_latest_checkpoint_path(
         output_root,
@@ -549,7 +552,7 @@ def train(  # noqa: C901
             config.learning_rate,
             config.lr_schedule,
             epoch,
-            total_epochs=config.epochs,
+            total_epochs=effective_value_epochs,
             step_size=config.lr_step_size,
             gamma=config.lr_gamma,
             lr_min=config.lr_min,
@@ -584,7 +587,7 @@ def train(  # noqa: C901
                 "lr": _format_lr(current_lr),
             }
         )
-        if epoch % value_log_every == 0 or epoch == 1 or epoch == config.epochs:
+        if epoch % value_log_every == 0 or epoch == 1 or epoch == effective_value_epochs:
             best_label = (
                 ""
                 if value_best_loss is None
