@@ -51,9 +51,12 @@ def test_train_arg_resolver_parses_advanced_flags() -> None:
             "3",
             "--diffusion-min-delta",
             "0.05",
+            "--tensorboard-log-dir",
+            "logs/tensorboard",
         ]
     ).resolve()
 
     assert values["diffusion_max_epochs"] == 2
     assert values["value_patience"] == 3
     assert values["diffusion_min_delta"] == 0.05
+    assert values["tensorboard_log_dir"] == "logs/tensorboard"

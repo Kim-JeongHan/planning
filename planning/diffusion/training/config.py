@@ -33,6 +33,7 @@ class DiffusionTrainingConfig(BaseModel):
     value_patience: int | None = None
     diffusion_min_delta: float = 0.0
     value_min_delta: float = 0.0
+    tensorboard_log_dir: str | None = None
 
     @staticmethod
     def _derive_normalizer(trajectories: np.ndarray) -> PlannerStateNormalizer:

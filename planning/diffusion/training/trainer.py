@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch  # type: ignore
@@ -222,6 +223,29 @@ def _coerce_log_every(epochs: int, log_every: int | None) -> int:
     return max(1, int(log_every))
 
 
+def _create_summary_writer(log_dir: str | None) -> Any | None:
+    """Create a TensorBoard summary writer if requested."""
+    if log_dir is None:
+        return None
+
+    try:
+        from torch.utils.tensorboard import SummaryWriter  # type: ignore
+    except Exception as exc:  # pragma: no cover - runtime optional dependency
+        raise ImportError(
+            "TensorBoard is required for summary logging. "
+            "Install it in your environment before enabling --tensorboard-log-dir."
+        ) from exc
+
+    writer_dir = Path(log_dir)
+    writer_dir.mkdir(parents=True, exist_ok=True)
+    return SummaryWriter(log_dir=str(writer_dir))
+
+
+def _log_scalar(writer: Any | None, tag: str, value: float, step: int) -> None:
+    if writer is not None:
+        writer.add_scalar(tag, float(value), step)
+
+
 class EpochLossTracker:
     """Track running and best loss statistics with early-stop counters."""
 
@@ -280,6 +304,7 @@ class DiffusionTrainingPipeline:
         value_patience: int | None = None,
         diffusion_min_delta: float = 0.0,
         value_min_delta: float = 0.0,
+        tensorboard_log_dir: str | None = None,
     ) -> None:
         self.dataset = dataset
         self.output_root = output_root
@@ -303,6 +328,7 @@ class DiffusionTrainingPipeline:
         self.value_patience = value_patience
         self.diffusion_min_delta = diffusion_min_delta
         self.value_min_delta = value_min_delta
+        self.tensorboard_log_dir = tensorboard_log_dir
 
     def run(self) -> list[Path]:
         return _run_training_impl(
@@ -328,6 +354,7 @@ class DiffusionTrainingPipeline:
             value_patience=self.value_patience,
             diffusion_min_delta=self.diffusion_min_delta,
             value_min_delta=self.value_min_delta,
+            tensorboard_log_dir=self.tensorboard_log_dir,
         )
 
 
@@ -423,10 +450,13 @@ def _run_training_impl(  # noqa: C901
     value_patience: int | None = None,
     diffusion_min_delta: float = 0.0,
     value_min_delta: float = 0.0,
+    tensorboard_log_dir: str | None = None,
 ) -> list[Path]:
     if seed is not None:
         torch.manual_seed(seed)
         np.random.seed(seed)
+
+    summary_writer = _create_summary_writer(tensorboard_log_dir)
 
     dataset_key = Path(dataset).stem
     if dataset_key == "":
@@ -484,6 +514,7 @@ def _run_training_impl(  # noqa: C901
         lr_min=lr_min,
         discount=discount,
         train_value=train_value,
+        tensorboard_log_dir=tensorboard_log_dir,
     )
 
     trajectories = dataset_source.to_normalized_numpy(trajectories=sequences)
@@ -563,6 +594,22 @@ def _run_training_impl(  # noqa: C901
     value_patience, value_min_delta = _coerce_stop_arguments(
         patience=value_patience, min_delta=value_min_delta, name="value"
     )
+    if summary_writer is not None:
+        summary_writer.add_text(
+            "training/config",
+            (
+                f"dataset={dataset}\n"
+                f"horizon={config.horizon}\n"
+                f"state_dim={config.state_dim}\n"
+                f"n_diffusion_steps={config.n_diffusion_steps}\n"
+                f"batch_size={config.batch_size}\n"
+                f"learning_rate={config.learning_rate}\n"
+                f"lr_schedule={config.lr_schedule}\n"
+                f"epochs={effective_diffusion_epochs}\n"
+                f"seed={seed}\n"
+            ),
+            0,
+        )
 
     diffusion_bar = tqdm(
         range(1, effective_diffusion_epochs + 1),
@@ -610,6 +657,15 @@ def _run_training_impl(  # noqa: C901
                 f"[diffusion] epoch {epoch}/{effective_diffusion_epochs} "
                 f"loss={loss:.6f} lr={current_lr:.6f} "
                 f"delta={delta}{best_label}{best_tag}"
+            )
+        _log_scalar(summary_writer, "diffusion/loss", loss, epoch)
+        _log_scalar(summary_writer, "diffusion/lr", current_lr, epoch)
+        if diffusion_tracker.best_loss is not None:
+            _log_scalar(
+                summary_writer,
+                "diffusion/best_loss",
+                diffusion_tracker.best_loss,
+                epoch,
             )
         checkpoint_writer.save(
             diffusion_latest_ckpt,
@@ -670,6 +726,8 @@ def _run_training_impl(  # noqa: C901
     value_ckpts: list[Path] = []
     if not train_value:
         diffusion_bar.close()
+        if summary_writer is not None:
+            summary_writer.close()
         return diffusion_ckpts
 
     value_model = SimpleValueModel.create(
@@ -694,6 +752,8 @@ def _run_training_impl(  # noqa: C901
     if value_max_epochs is not None:
         effective_value_epochs = min(effective_value_epochs, value_max_epochs)
     if effective_value_epochs < 1:
+        if summary_writer is not None:
+            summary_writer.close()
         return diffusion_ckpts
     value_log_every = _coerce_log_every(effective_value_epochs, log_every)
 
@@ -737,6 +797,10 @@ def _run_training_impl(  # noqa: C901
                 f"loss={value_loss:.6f} lr={current_lr:.6f} "
                 f"delta={delta}{best_label}{best_tag}"
             )
+        _log_scalar(summary_writer, "value/loss", value_loss, epoch)
+        _log_scalar(summary_writer, "value/lr", current_lr, epoch)
+        if value_tracker.best_loss is not None:
+            _log_scalar(summary_writer, "value/best_loss", value_tracker.best_loss, epoch)
         checkpoint_writer.save(
             value_latest_ckpt,
             model=value_model,
@@ -792,5 +856,7 @@ def _run_training_impl(  # noqa: C901
     )
     value_bar.close()
     diffusion_bar.close()
+    if summary_writer is not None:
+        summary_writer.close()
 
     return diffusion_ckpts + value_ckpts

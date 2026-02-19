@@ -10,3 +10,4 @@ discount: 1.0
 seed: 42
 log_every: 100
 train_value: true
+tensorboard_log_dir: logs/diffusion_logs_h16/tensorboard

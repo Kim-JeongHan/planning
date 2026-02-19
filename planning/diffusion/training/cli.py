@@ -110,6 +110,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Minimum loss reduction to reset patience for value.",
     )
+    parser.add_argument(
+        "--tensorboard-log-dir",
+        type=str,
+        default=None,
+        help="Directory for TensorBoard logs. Disabled when omitted.",
+    )
     return parser
 
 
@@ -237,6 +243,9 @@ class TrainArgResolver:
             "value_min_delta": TrainArgResolver._cast_or_raise_float(
                 pick("value_min_delta", 0.0), "value-min-delta"
             ),
+            "tensorboard_log_dir": TrainArgResolver._cast_or_raise_str(
+                pick("tensorboard_log_dir", None)
+            ),
         }
 
     def resolve(self) -> dict[str, object]:
@@ -276,6 +285,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         value_patience=values["value_patience"],
         diffusion_min_delta=values["diffusion_min_delta"],
         value_min_delta=values["value_min_delta"],
+        tensorboard_log_dir=values["tensorboard_log_dir"],
     )
     ckpts = pipeline.run()
     print("Saved checkpoints:")
