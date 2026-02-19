@@ -7,6 +7,7 @@ external ``diffuser`` dependency originally referenced by the project.
 
 from __future__ import annotations
 
+from .inference import extract_trajectory_observations, sample_trajectory_batch
 from .sampling import (
     ConditionAdapter,
     DiffusionSamplingEngine,
@@ -30,15 +31,17 @@ __all__ = [
     "CheckpointConfig",
     "CheckpointPathManager",
     "CheckpointWriter",
-    "Config",
     "ConditionAdapter",
+    "Config",
     "DiffusionArtifactLoader",
     "DiffusionSamplingEngine",
     "DiffusionTrainingPipeline",
-    "GuidedPolicy",
     "GuidancePolicy",
+    "GuidedPolicy",
     "ModelPredictor",
-    "check_compatibility",
     "TemplatingContextResolver",
     "ValueGuide",
+    "check_compatibility",
+    "extract_trajectory_observations",
+    "sample_trajectory_batch",
 ]

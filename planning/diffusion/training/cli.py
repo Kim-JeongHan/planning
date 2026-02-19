@@ -116,6 +116,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Directory for TensorBoard logs. Disabled when omitted.",
     )
+    parser.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=None,
+        help="Save epoch checkpoints every N epochs (0 disables).",
+    )
+    parser.add_argument(
+        "--keep-last-checkpoints",
+        type=int,
+        default=None,
+        help="Keep only the most recent N epoch checkpoints.",
+    )
+    parser.add_argument(
+        "--best-top-k",
+        type=int,
+        default=None,
+        help="Keep the best-K checkpoints by loss.",
+    )
     return parser
 
 
@@ -167,6 +185,28 @@ class TrainArgResolver:
         if isinstance(value, int):
             return value
         raise TypeError(f"`{name}` must be an integer or null, got {type(value)!r}")
+
+    @staticmethod
+    def _cast_or_raise_optional_non_negative_int(
+        value: object, name: str
+    ) -> int | None:
+        casted = TrainArgResolver._cast_or_raise_optional_int(value, name)
+        if casted is None:
+            return None
+        if casted < 0:
+            raise TypeError(f"`{name}` must be >= 0, got {casted!r}")
+        return casted
+
+    @staticmethod
+    def _cast_or_raise_optional_positive_int(
+        value: object, name: str,
+    ) -> int | None:
+        casted = TrainArgResolver._cast_or_raise_optional_int(value, name)
+        if casted is None:
+            return None
+        if casted < 1:
+            raise TypeError(f"`{name}` must be >= 1, got {casted!r}")
+        return casted
 
     @staticmethod
     def _cast_or_raise_str(value: object) -> str | None:
@@ -243,6 +283,15 @@ class TrainArgResolver:
             "value_min_delta": TrainArgResolver._cast_or_raise_float(
                 pick("value_min_delta", 0.0), "value-min-delta"
             ),
+            "checkpoint_every": TrainArgResolver._cast_or_raise_optional_non_negative_int(
+                pick("checkpoint_every", 0), "checkpoint-every"
+            ),
+            "keep_last_checkpoints": TrainArgResolver._cast_or_raise_optional_non_negative_int(
+                pick("keep_last_checkpoints", 0), "keep-last-checkpoints"
+            ),
+            "best_top_k": TrainArgResolver._cast_or_raise_optional_positive_int(
+                pick("best_top_k", 1), "best-top-k"
+            ),
             "tensorboard_log_dir": TrainArgResolver._cast_or_raise_str(
                 pick("tensorboard_log_dir", None)
             ),
@@ -285,6 +334,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         value_patience=values["value_patience"],
         diffusion_min_delta=values["diffusion_min_delta"],
         value_min_delta=values["value_min_delta"],
+        checkpoint_every=values["checkpoint_every"],
+        keep_last_checkpoints=values["keep_last_checkpoints"],
+        best_top_k=values["best_top_k"],
         tensorboard_log_dir=values["tensorboard_log_dir"],
     )
     ckpts = pipeline.run()

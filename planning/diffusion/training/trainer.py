@@ -304,6 +304,9 @@ class DiffusionTrainingPipeline:
         value_patience: int | None = None,
         diffusion_min_delta: float = 0.0,
         value_min_delta: float = 0.0,
+        checkpoint_every: int = 0,
+        keep_last_checkpoints: int = 0,
+        best_top_k: int = 1,
         tensorboard_log_dir: str | None = None,
     ) -> None:
         self.dataset = dataset
@@ -328,6 +331,9 @@ class DiffusionTrainingPipeline:
         self.value_patience = value_patience
         self.diffusion_min_delta = diffusion_min_delta
         self.value_min_delta = value_min_delta
+        self.checkpoint_every = checkpoint_every
+        self.keep_last_checkpoints = keep_last_checkpoints
+        self.best_top_k = best_top_k
         self.tensorboard_log_dir = tensorboard_log_dir
 
     def run(self) -> list[Path]:
@@ -354,6 +360,9 @@ class DiffusionTrainingPipeline:
             value_patience=self.value_patience,
             diffusion_min_delta=self.diffusion_min_delta,
             value_min_delta=self.value_min_delta,
+            checkpoint_every=self.checkpoint_every,
+            keep_last_checkpoints=self.keep_last_checkpoints,
+            best_top_k=self.best_top_k,
             tensorboard_log_dir=self.tensorboard_log_dir,
         )
 
@@ -383,6 +392,18 @@ def _coerce_stop_arguments(
     if min_delta < 0.0:
         raise ValueError(f"{name}_min_delta must be >= 0.")
     return patience, float(min_delta)
+
+
+def _coerce_checkpoint_policy(
+    checkpoint_every: int, keep_last_checkpoints: int, best_top_k: int
+) -> tuple[int, int, int]:
+    if checkpoint_every < 0:
+        raise ValueError("checkpoint_every must be >= 0.")
+    if keep_last_checkpoints < 0:
+        raise ValueError("keep_last_checkpoints must be >= 0.")
+    if best_top_k < 1:
+        raise ValueError("best_top_k must be >= 1.")
+    return int(checkpoint_every), int(keep_last_checkpoints), int(best_top_k)
 
 
 def _learning_rate_for_epoch(
@@ -426,6 +447,42 @@ def _format_lr(lr: float) -> str:
     return f"{lr:.3e}"
 
 
+def _remove_missing_ok(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _prune_kept_checkpoints(kept: list[Path], keep_last: int) -> None:
+    if keep_last <= 0:
+        return
+    while len(kept) > keep_last:
+        stale = kept.pop(0)
+        _remove_missing_ok(stale)
+
+
+def _update_best_checkpoints(
+    current_best_records: list[tuple[float, int, Path]],
+    candidate_loss: float,
+    candidate_epoch: int,
+    candidate_path: Path,
+    best_top_k: int,
+) -> tuple[list[tuple[float, int, Path]], bool]:
+    candidates = current_best_records + [(candidate_loss, candidate_epoch, candidate_path)]
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    next_best = candidates[:best_top_k]
+
+    stale_paths = {path for _, _, path in current_best_records} - {
+        path for _, _, path in next_best
+    }
+    for stale_path in stale_paths:
+        _remove_missing_ok(stale_path)
+
+    candidate_in_best = any(path == candidate_path for _, _, path in next_best)
+    return next_best, candidate_in_best
+
+
 def _run_training_impl(  # noqa: C901
     *,
     dataset: str,
@@ -450,6 +507,9 @@ def _run_training_impl(  # noqa: C901
     value_patience: int | None = None,
     diffusion_min_delta: float = 0.0,
     value_min_delta: float = 0.0,
+    checkpoint_every: int = 0,
+    keep_last_checkpoints: int = 0,
+    best_top_k: int = 1,
     tensorboard_log_dir: str | None = None,
 ) -> list[Path]:
     if seed is not None:
@@ -514,7 +574,16 @@ def _run_training_impl(  # noqa: C901
         lr_min=lr_min,
         discount=discount,
         train_value=train_value,
+        checkpoint_every=checkpoint_every,
+        keep_last_checkpoints=keep_last_checkpoints,
+        best_top_k=best_top_k,
         tensorboard_log_dir=tensorboard_log_dir,
+    )
+
+    checkpoint_every, keep_last_checkpoints, best_top_k = _coerce_checkpoint_policy(
+        checkpoint_every,
+        keep_last_checkpoints,
+        best_top_k,
     )
 
     trajectories = dataset_source.to_normalized_numpy(trajectories=sequences)

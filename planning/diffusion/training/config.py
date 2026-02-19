@@ -33,6 +33,9 @@ class DiffusionTrainingConfig(BaseModel):
     value_patience: int | None = None
     diffusion_min_delta: float = 0.0
     value_min_delta: float = 0.0
+    checkpoint_every: int = 0
+    keep_last_checkpoints: int = 0
+    best_top_k: int = 1
     tensorboard_log_dir: str | None = None
 
     @staticmethod
