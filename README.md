@@ -233,6 +233,8 @@ Note: this codebase does **not** apply an additional reward-correction stage dur
 geometric proxy target (`log(1 + distance-to-goal)`); guidance is driven by that learned value
 signal and inpainting constraints.
 
+<img src="docs/images/diffusion_trajectory_one_shot_example.png" alt="Diffuser One-Shot Example" width="100%" height="100%"/>
+
 **Paper**: [Janner et al. (2022). "Planning with Diffusion for Flexible Behavior Synthesis"](https://github.com/jannerm/diffuser)
 
 **Install diffuser dependencies:**
