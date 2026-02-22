@@ -14,7 +14,6 @@ class DiffusionTrainingConfig(DiffusionTrainingPipelineConfig):
     """Configuration used by the local trainer."""
 
     dataset_name: str = "dataset"
-    n_hidden: int = 256
 
     @staticmethod
     def _derive_normalizer(trajectories: np.ndarray) -> PlannerStateNormalizer:

@@ -49,7 +49,13 @@ class EMAAccumulator:
 
     def state_dict(self) -> dict[str, object]:
         """Return the EMA shadow weights (used for ``ema_state_dict`` in checkpoints)."""
-        return {name: tensor.clone() for name, tensor in self.shadow.items()}
+        state = {
+            name: tensor.clone()
+            for name, tensor in self.model.state_dict().items()  # type: ignore[union-attr]
+        }
+        for name, tensor in self.shadow.items():
+            state[name] = tensor.clone()
+        return state
 
 
 class DiffusionEpochTrainer:
@@ -66,26 +72,22 @@ class DiffusionEpochTrainer:
         model: object,
         optimizer: object,
         schedule: DiffusionSchedule,
-        torch_backend: object,
-        functional_backend: object,
         ema: EMAAccumulator | None = None,
     ) -> None:
         self.model = model
         self.optimizer = optimizer
         self.schedule = schedule
-        self.torch = torch_backend
-        self.functional = functional_backend
         self.ema = ema
-        self._alpha_bar = self.torch.as_tensor(schedule.alpha_bar, dtype=self.torch.float32)
+        self._alpha_bar = torch.as_tensor(schedule.alpha_bar, dtype=torch.float32)
         self._model_device = next(model.parameters()).device  # type: ignore[union-attr]
 
     def train_epoch(self, loader: object) -> float:
-        total = 0.0
+        total_loss: torch.Tensor | None = None
         count = 0
         for observations, _condition in loader:
             observations = observations.to(self._model_device, non_blocking=True)
-            noise = self.torch.randn_like(observations)
-            t = self.torch.randint(
+            noise = torch.randn_like(observations)
+            t = torch.randint(
                 0,
                 self.schedule.n_diffusion_steps,
                 (observations.shape[0],),
@@ -95,31 +97,32 @@ class DiffusionEpochTrainer:
                 device=observations.device, dtype=observations.dtype
             )[t]
             alpha_bar = alpha_bar.view(-1, *([1] * (observations.ndim - 1)))
-            noisy = self.torch.sqrt(alpha_bar) * observations + self.torch.sqrt(
+            noisy = torch.sqrt(alpha_bar) * observations + torch.sqrt(
                 1.0 - alpha_bar
             ) * noise
             eps_pred = self.model(noisy, t)
-            loss = self.functional.mse_loss(eps_pred, noise)
+            loss = functional.mse_loss(eps_pred, noise)
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
             self.optimizer.step()
             if self.ema is not None:
                 self.ema.update()
-            total += float(loss.item())
+            detached_loss = loss.detach()
+            total_loss = detached_loss if total_loss is None else total_loss + detached_loss
             count += 1
-        if count == 0:
+        if count == 0 or total_loss is None:
             return 0.0
-        return total / count
+        return float((total_loss / count).item())
 
     def evaluate_epoch(self, loader: object) -> float:
         self.model.eval()
-        total = 0.0
+        total_loss: torch.Tensor | None = None
         count = 0
-        with self.torch.no_grad():
+        with torch.no_grad():
             for observations, _condition in loader:
                 observations = observations.to(self._model_device, non_blocking=True)
-                noise = self.torch.randn_like(observations)
-                t = self.torch.randint(
+                noise = torch.randn_like(observations)
+                t = torch.randint(
                     0,
                     self.schedule.n_diffusion_steps,
                     (observations.shape[0],),
@@ -129,17 +132,18 @@ class DiffusionEpochTrainer:
                     device=observations.device, dtype=observations.dtype
                 )[t]
                 alpha_bar = alpha_bar.view(-1, *([1] * (observations.ndim - 1)))
-                noisy = self.torch.sqrt(alpha_bar) * observations + self.torch.sqrt(
+                noisy = torch.sqrt(alpha_bar) * observations + torch.sqrt(
                     1.0 - alpha_bar
                 ) * noise
                 eps_pred = self.model(noisy, t)
-                loss = self.functional.mse_loss(eps_pred, noise)
-                total += float(loss.item())
+                loss = functional.mse_loss(eps_pred, noise)
+                detached_loss = loss.detach()
+                total_loss = detached_loss if total_loss is None else total_loss + detached_loss
                 count += 1
         self.model.train()
-        if count == 0:
+        if count == 0 or total_loss is None:
             return 0.0
-        return total / count
+        return float((total_loss / count).item())
 
 
 class ValueEpochTrainer:
@@ -156,26 +160,22 @@ class ValueEpochTrainer:
         model: object,
         optimizer: object,
         normalizer: object,
-        torch_backend: object,
-        functional_backend: object,
         ema: EMAAccumulator | None = None,
     ) -> None:
         self.model = model
         self.optimizer = optimizer
         self.normalizer = normalizer
-        self.torch = torch_backend
-        self.functional = functional_backend
         self.ema = ema
         self._model_device = next(model.parameters()).device  # type: ignore[union-attr]
 
     def _compute_target(self, observations: object) -> object:
         """Compute distance-to-goal target from the trajectory's final state."""
         goal = observations[:, -1, :]  # [B, D]
-        distances = self.torch.norm(observations - goal[:, None, :], dim=-1)  # [B, H]
-        return self.torch.log1p(distances.mean(dim=1, keepdim=True))  # [B, 1]
+        distances = torch.norm(observations - goal[:, None, :], dim=-1)  # [B, H]
+        return torch.log1p(distances.mean(dim=1, keepdim=True))  # [B, 1]
 
     def train_epoch(self, loader: object) -> float:
-        total = 0.0
+        total_loss: torch.Tensor | None = None
         count = 0
         for observations, _condition in loader:
             observations = observations.to(self._model_device, non_blocking=True)
@@ -184,23 +184,24 @@ class ValueEpochTrainer:
             target = self._compute_target(observations)
             pred = self.model(observations)
             target = target.to(dtype=pred.dtype, device=pred.device)
-            loss = self.functional.mse_loss(pred, target)
+            loss = functional.mse_loss(pred, target)
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
             self.optimizer.step()
             if self.ema is not None:
                 self.ema.update()
-            total += float(loss.item())
+            detached_loss = loss.detach()
+            total_loss = detached_loss if total_loss is None else total_loss + detached_loss
             count += 1
-        if count == 0:
+        if count == 0 or total_loss is None:
             return 0.0
-        return total / count
+        return float((total_loss / count).item())
 
     def evaluate_epoch(self, loader: object) -> float:
         self.model.eval()
-        total = 0.0
+        total_loss: torch.Tensor | None = None
         count = 0
-        with self.torch.no_grad():
+        with torch.no_grad():
             for observations, _condition in loader:
                 observations = observations.to(self._model_device, non_blocking=True)
                 if observations.shape[1] < 1:
@@ -208,13 +209,14 @@ class ValueEpochTrainer:
                 target = self._compute_target(observations)
                 pred = self.model(observations)
                 target = target.to(dtype=pred.dtype, device=pred.device)
-                loss = self.functional.mse_loss(pred, target)
-                total += float(loss.item())
+                loss = functional.mse_loss(pred, target)
+                detached_loss = loss.detach()
+                total_loss = detached_loss if total_loss is None else total_loss + detached_loss
                 count += 1
         self.model.train()
-        if count == 0:
+        if count == 0 or total_loss is None:
             return 0.0
-        return total / count
+        return float((total_loss / count).item())
 
 
 def _log_every(epochs: int, target_ticks: int = 20) -> int:
@@ -354,10 +356,9 @@ class DiffusionTrainingPipeline:
             coerce_lr_schedule=_coerce_lr_schedule,
         )
 
-        checkpoint_every, keep_last_checkpoints, best_top_k = _coerce_checkpoint_policy(
+        checkpoint_every, keep_last_checkpoints = _coerce_checkpoint_policy(
             config.checkpoint_every,
             config.keep_last_checkpoints,
-            config.best_top_k,
         )
         validation_split = _coerce_validation_split(config.validation_split)
         latest_checkpoint_every = _coerce_latest_checkpoint_every(
@@ -405,8 +406,6 @@ class DiffusionTrainingPipeline:
             model=diffusion_model,
             optimizer=diffusion_optimizer,
             schedule=schedule,
-            torch_backend=torch,
-            functional_backend=functional,
             ema=diffusion_ema,
         )
         checkpoint_config = CheckpointConfig(
@@ -453,7 +452,6 @@ class DiffusionTrainingPipeline:
                     f"seed={cfg.seed}\n"
                     f"checkpoint_every={checkpoint_every}\n"
                     f"keep_last_checkpoints={keep_last_checkpoints}\n"
-                    f"best_top_k={best_top_k}\n"
                 ),
                 0,
             )
@@ -477,7 +475,6 @@ class DiffusionTrainingPipeline:
             checkpoint_every=checkpoint_every,
             latest_checkpoint_every=latest_checkpoint_every,
             keep_last_checkpoints=keep_last_checkpoints,
-            best_top_k=best_top_k,
         )
 
         if not config.train_value:
@@ -496,8 +493,6 @@ class DiffusionTrainingPipeline:
             model=value_model,
             optimizer=value_optimizer,
             normalizer=normalizer,
-            torch_backend=torch,
-            functional_backend=functional,
             ema=value_ema,
         )
 
@@ -531,7 +526,6 @@ class DiffusionTrainingPipeline:
             checkpoint_every=checkpoint_every,
             latest_checkpoint_every=latest_checkpoint_every,
             keep_last_checkpoints=keep_last_checkpoints,
-            best_top_k=best_top_k,
         )
 
         if summary_writer is not None:
@@ -559,14 +553,12 @@ class DiffusionTrainingPipeline:
         checkpoint_every: int,
         latest_checkpoint_every: int,
         keep_last_checkpoints: int,
-        best_top_k: int,
     ) -> list[Path]:
         diffusion_ckpts: list[Path] = []
         diffusion_tracker = EpochLossTracker(
             min_delta=diffusion_min_delta, patience=diffusion_patience
         )
         diffusion_recent_ckpts: list[Path] = []
-        diffusion_best_records: list[tuple[float, int, Path]] = []
 
         diffusion_bar = tqdm(
             range(1, effective_diffusion_epochs + 1),
@@ -631,7 +623,7 @@ class DiffusionTrainingPipeline:
                     diffusion_tracker.best_loss,
                     epoch,
                 )
-            diffusion_best_records = _manage_stage_checkpoints(
+            _manage_stage_checkpoints(
                 phase="diffusion",
                 epoch=epoch,
                 total_epochs=effective_diffusion_epochs,
@@ -644,7 +636,6 @@ class DiffusionTrainingPipeline:
                 metric_loss=metric_loss,
                 train_loss=train_loss,
                 is_new_best=is_new_best,
-                best_records=diffusion_best_records,
                 recent_ckpts=diffusion_recent_ckpts,
                 ckpt_paths=diffusion_ckpts,
                 latest_ckpt=diffusion_latest_ckpt,
@@ -652,7 +643,6 @@ class DiffusionTrainingPipeline:
                 checkpoint_every=checkpoint_every,
                 latest_checkpoint_every=latest_checkpoint_every,
                 keep_last_checkpoints=keep_last_checkpoints,
-                best_top_k=best_top_k,
             )
 
             if diffusion_tracker.should_stop():
@@ -691,12 +681,10 @@ class DiffusionTrainingPipeline:
         checkpoint_every: int,
         latest_checkpoint_every: int,
         keep_last_checkpoints: int,
-        best_top_k: int,
     ) -> list[Path]:
         value_ckpts: list[Path] = []
         value_tracker = EpochLossTracker(min_delta=value_min_delta, patience=value_patience)
         value_recent_ckpts: list[Path] = []
-        value_best_records: list[tuple[float, int, Path]] = []
         value_bar = tqdm(
             range(1, effective_value_epochs + 1),
             desc="Value training",
@@ -751,7 +739,7 @@ class DiffusionTrainingPipeline:
             _log_scalar(summary_writer, "value/lr", current_lr, epoch)
             if value_tracker.best_loss is not None:
                 _log_scalar(summary_writer, "value/best_loss", value_tracker.best_loss, epoch)
-            value_best_records = _manage_stage_checkpoints(
+            _manage_stage_checkpoints(
                 phase="value",
                 epoch=epoch,
                 total_epochs=effective_value_epochs,
@@ -764,7 +752,6 @@ class DiffusionTrainingPipeline:
                 metric_loss=value_metric_loss,
                 train_loss=value_train_loss,
                 is_new_best=is_new_best,
-                best_records=value_best_records,
                 recent_ckpts=value_recent_ckpts,
                 ckpt_paths=value_ckpts,
                 latest_ckpt=value_latest_ckpt,
@@ -772,7 +759,6 @@ class DiffusionTrainingPipeline:
                 checkpoint_every=checkpoint_every,
                 latest_checkpoint_every=latest_checkpoint_every,
                 keep_last_checkpoints=keep_last_checkpoints,
-                best_top_k=best_top_k,
                 extra_meta={"discount": config.discount},
             )
 
@@ -820,15 +806,13 @@ def _coerce_stop_arguments(
 
 
 def _coerce_checkpoint_policy(
-    checkpoint_every: int, keep_last_checkpoints: int, best_top_k: int
-) -> tuple[int, int, int]:
+    checkpoint_every: int, keep_last_checkpoints: int
+) -> tuple[int, int]:
     if checkpoint_every < 0:
         raise ValueError("checkpoint_every must be >= 0.")
     if keep_last_checkpoints < 0:
         raise ValueError("keep_last_checkpoints must be >= 0.")
-    if best_top_k < 1:
-        raise ValueError("best_top_k must be >= 1.")
-    return int(checkpoint_every), int(keep_last_checkpoints), int(best_top_k)
+    return int(checkpoint_every), int(keep_last_checkpoints)
 
 
 def _coerce_validation_split(validation_split: float) -> float:
@@ -994,10 +978,6 @@ def _append_unique(paths: list[Path], value: Path) -> None:
         paths.append(value)
 
 
-def _best_checkpoint_path(path_manager: CheckpointPathManager, kind: str, epoch: int) -> Path:
-    return path_manager.checkpoint_root(kind) / f"best_epoch_{int(epoch):04d}.ckpt"
-
-
 def _build_checkpoint_meta(
     *,
     config: DiffusionTrainingConfig,
@@ -1046,7 +1026,6 @@ def _manage_stage_checkpoints(
     metric_loss: float,
     train_loss: float,
     is_new_best: bool,
-    best_records: list[tuple[float, int, Path]],
     recent_ckpts: list[Path],
     ckpt_paths: list[Path],
     latest_ckpt: Path,
@@ -1054,10 +1033,16 @@ def _manage_stage_checkpoints(
     checkpoint_every: int,
     latest_checkpoint_every: int,
     keep_last_checkpoints: int,
-    best_top_k: int,
     extra_meta: dict[str, object] | None = None,
-) -> list[tuple[float, int, Path]]:
-    ema_sd = ema.state_dict()
+) -> None:
+    ema_sd: dict[str, object] | None = None
+
+    def _ema_state_dict() -> dict[str, object]:
+        nonlocal ema_sd
+        if ema_sd is None:
+            ema_sd = ema.state_dict()
+        return ema_sd
+
     if checkpoint_every > 0 and epoch % checkpoint_every == 0:
         periodic_ckpt_path = checkpoint_writer.path_manager.checkpoint_path(phase, epoch)
         checkpoint_writer.save(
@@ -1072,39 +1057,12 @@ def _manage_stage_checkpoints(
                 extra=extra_meta,
             ),
             model_kind=phase,
-            ema_state_dict=ema_sd,
+            ema_state_dict=_ema_state_dict(),
         )
         if recent_ckpts is not None:
             recent_ckpts.append(periodic_ckpt_path)
             _prune_kept_checkpoints(recent_ckpts, keep_last_checkpoints)
         _append_unique(ckpt_paths, periodic_ckpt_path)
-
-    best_candidate_ckpt = _best_checkpoint_path(checkpoint_writer.path_manager, phase, epoch)
-    best_records, candidate_is_best = _update_best_checkpoints(
-        current_best_records=best_records,
-        candidate_loss=metric_loss,
-        candidate_epoch=epoch,
-        candidate_path=best_candidate_ckpt,
-        best_top_k=best_top_k,
-    )
-    if candidate_is_best:
-        candidate_meta = _build_checkpoint_meta(
-            config=config,
-            dataset_key=dataset_key,
-            epoch=epoch,
-            loss=metric_loss,
-            extra=extra_meta,
-        )
-        candidate_meta.update({"is_best_ranked": True})
-        checkpoint_writer.save(
-            best_candidate_ckpt,
-            model=model,
-            normalizer=normalizer,
-            meta=candidate_meta,
-            model_kind=phase,
-            ema_state_dict=ema_sd,
-        )
-        _append_unique(ckpt_paths, best_candidate_ckpt)
 
     if _should_save_latest(
         epoch=epoch,
@@ -1124,7 +1082,7 @@ def _manage_stage_checkpoints(
                 extra=extra_meta,
             ),
             model_kind=phase,
-            ema_state_dict=ema_sd,
+            ema_state_dict=_ema_state_dict(),
         )
         _append_unique(ckpt_paths, latest_ckpt)
 
@@ -1143,30 +1101,7 @@ def _manage_stage_checkpoints(
             normalizer=normalizer,
             meta=best_meta,
             model_kind=phase,
-            ema_state_dict=ema_sd,
+            ema_state_dict=_ema_state_dict(),
         )
         if best_ckpt not in ckpt_paths:
             ckpt_paths.append(best_ckpt)
-
-    return best_records
-
-
-def _update_best_checkpoints(
-    current_best_records: list[tuple[float, int, Path]],
-    candidate_loss: float,
-    candidate_epoch: int,
-    candidate_path: Path,
-    best_top_k: int,
-) -> tuple[list[tuple[float, int, Path]], bool]:
-    candidates = [*current_best_records, (candidate_loss, candidate_epoch, candidate_path)]
-    candidates.sort(key=lambda item: (item[0], item[1]))
-    next_best = candidates[:best_top_k]
-
-    stale_paths = {path for _, _, path in current_best_records} - {
-        path for _, _, path in next_best
-    }
-    for stale_path in stale_paths:
-        _remove_missing_ok(stale_path)
-
-    candidate_in_best = any(path == candidate_path for _, _, path in next_best)
-    return next_best, candidate_in_best

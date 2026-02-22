@@ -39,6 +39,8 @@ class DiffusionTrainingPipelineConfig(DiffusionBaseConfig):
     state_dim: int
     epochs: int
     batch_size: int
+    device: str = "cpu"
+    n_hidden: int = 256
     learning_rate: float = 1e-3
     lr_schedule: str = "constant"
     lr_step_size: int = 100
@@ -54,7 +56,6 @@ class DiffusionTrainingPipelineConfig(DiffusionBaseConfig):
     value_min_delta: float = 0.0
     checkpoint_every: int = 0
     keep_last_checkpoints: int = 0
-    best_top_k: int = 1
     tensorboard_log_dir: str | None = None
     validation_split: float = 0.0
     latest_checkpoint_every: int = 0

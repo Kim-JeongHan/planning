@@ -34,6 +34,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--epochs", type=int, default=None, help="Training epochs.")
     parser.add_argument("--log-every", type=int, default=None, help="Print loss every N epochs.")
     parser.add_argument("--batch-size", type=int, default=None, help="Batch size.")
+    parser.add_argument(
+        "--n-hidden",
+        type=int,
+        default=None,
+        help="Base hidden channel width for diffusion/value temporal networks.",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help="Training device: auto, cpu, cuda, or cuda:<index>.",
+    )
     parser.add_argument("--learning-rate", type=float, default=None, help="Learning rate.")
     parser.add_argument(
         "--lr-schedule",
@@ -129,12 +141,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Keep only the most recent N epoch checkpoints.",
     )
     parser.add_argument(
-        "--best-top-k",
-        type=int,
-        default=None,
-        help="Keep the best-K checkpoints by loss.",
-    )
-    parser.add_argument(
         "--validation-split",
         type=float,
         default=None,
@@ -210,17 +216,6 @@ class TrainArgResolver:
         return casted
 
     @staticmethod
-    def _cast_or_raise_optional_positive_int(
-        value: object, name: str,
-    ) -> int | None:
-        casted = TrainArgResolver._cast_or_raise_optional_int(value, name)
-        if casted is None:
-            return None
-        if casted < 1:
-            raise TypeError(f"`{name}` must be >= 1, got {casted!r}")
-        return casted
-
-    @staticmethod
     def _cast_or_raise_optional_float(
         value: object, name: str,
     ) -> float | None:
@@ -231,11 +226,11 @@ class TrainArgResolver:
         raise TypeError(f"`{name}` must be a float or null, got {type(value)!r}")
 
     @staticmethod
-    def _cast_or_raise_str(value: object) -> str | None:
+    def _cast_or_raise_optional_str(value: object, name: str) -> str | None:
         if value is None:
             return None
         if not isinstance(value, str):
-            raise TypeError(f"dataset must be a string, got {type(value)!r}")
+            raise TypeError(f"`{name}` must be a string or null, got {type(value)!r}")
         return value
 
     @staticmethod
@@ -259,7 +254,7 @@ class TrainArgResolver:
                 return yaml_values[name]
             return fallback
 
-        dataset = TrainArgResolver._cast_or_raise_str(pick("dataset", None))
+        dataset = TrainArgResolver._cast_or_raise_optional_str(pick("dataset", None), "dataset")
         return {
             "dataset": dataset,
             "output_root": pick("output_root", "logs"),
@@ -272,6 +267,10 @@ class TrainArgResolver:
             ),
             "epochs": TrainArgResolver._cast_or_raise_int(pick("epochs", 1), "epochs"),
             "batch_size": TrainArgResolver._cast_or_raise_int(pick("batch_size", 16), "batch-size"),
+            "n_hidden": TrainArgResolver._cast_or_raise_int(pick("n_hidden", 256), "n-hidden"),
+            "device": TrainArgResolver._cast_or_raise_optional_str(
+                pick("device", "cpu"), "device"
+            ),
             "learning_rate": TrainArgResolver._cast_or_raise_float(
                 pick("learning_rate", 1e-3), "learning-rate"
             ),
@@ -311,17 +310,14 @@ class TrainArgResolver:
             "keep_last_checkpoints": TrainArgResolver._cast_or_raise_optional_non_negative_int(
                 pick("keep_last_checkpoints", 0), "keep-last-checkpoints"
             ),
-            "best_top_k": TrainArgResolver._cast_or_raise_optional_positive_int(
-                pick("best_top_k", 1), "best-top-k"
-            ),
             "validation_split": TrainArgResolver._cast_or_raise_optional_float(
                 pick("validation_split", 0.0), "validation-split"
             ),
             "latest_checkpoint_every": TrainArgResolver._cast_or_raise_optional_non_negative_int(
                 pick("latest_checkpoint_every", 0), "latest-checkpoint-every"
             ),
-            "tensorboard_log_dir": TrainArgResolver._cast_or_raise_str(
-                pick("tensorboard_log_dir", None)
+            "tensorboard_log_dir": TrainArgResolver._cast_or_raise_optional_str(
+                pick("tensorboard_log_dir", None), "tensorboard-log-dir"
             ),
         }
 

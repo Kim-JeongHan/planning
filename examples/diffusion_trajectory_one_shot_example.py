@@ -4,17 +4,15 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any
 
 import numpy as np
-from pydantic import BaseModel, ValidationError, field_validator
 import viser
 import yaml
+from pydantic import BaseModel, ValidationError, field_validator
 
 from planning.collision import BoundedCollisionChecker, ObstacleCollisionChecker
 from planning.constraint import select_collision_free_trajectory
 from planning.diffusion import check_compatibility
-from planning.diffusion.inference import sample_trajectory_batch
 from planning.diffusion.sampling import GuidedPolicy, ValueGuide
 from planning.diffusion.utils import CheckpointCatalog, DiffusionArtifactLoader
 from planning.map import Map
@@ -38,7 +36,6 @@ class DiffusionConfig(BaseModel):
     n_guide_steps: int = 2
     scale: float = 0.1
     sample_batch_size: int = 4
-    condition_key: int | str = 0
 
 
 class EnvironmentConfig(BaseModel):
@@ -55,7 +52,7 @@ class EnvironmentConfig(BaseModel):
 
     @field_validator("obstacle_color", mode="before")
     @classmethod
-    def validate_color(cls, value: Any) -> tuple[int, int, int]:
+    def validate_color(cls, value: object) -> tuple[int, int, int]:
         """Validate obstacle color as an RGB tuple."""
         if isinstance(value, str):
             raise ValueError("obstacle_color must be an iterable of 3 values")
@@ -92,7 +89,7 @@ class DiffusionOneShotConfig(BaseModel):
     rollout: RolloutConfig = RolloutConfig()
 
     @classmethod
-    def load(cls, config_path: str) -> "DiffusionOneShotConfig":
+    def load(cls, config_path: str) -> DiffusionOneShotConfig:
         """Load and validate YAML configuration."""
         path = Path(config_path)
         if not path.exists():
@@ -218,16 +215,14 @@ def main(
         scale_grad_by_std=True,
         verbose=False,
     )
-    condition = np.concatenate([start_state, goal_state]).astype(float)
+    # Fix start *and* goal via inpainting: {timestep_index: state_array}.
+    # GuidedPolicy normalizes these to model space before denoising.
+    conditions = {0: start_state, policy.horizon - 1: goal_state}
 
     selected_trajectory = None
     for attempt in range(1, config.rollout.max_sampling_attempts + 1):
-        trajectory_candidates = sample_trajectory_batch(
-            policy=policy,
-            condition=condition,
-            sample_batch_size=config.diffusion.sample_batch_size,
-            condition_key=config.diffusion.condition_key,
-        )
+        result = policy(conditions, batch_size=config.diffusion.sample_batch_size, verbose=False)
+        trajectory_candidates = np.asarray(result.observations, dtype=float)
         selected_trajectory = select_collision_free_trajectory(
             trajectories=trajectory_candidates,
             collision_checker=collision_checker,

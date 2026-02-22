@@ -389,12 +389,22 @@ class GuidedPolicy:
         verbose: bool,
     ) -> np.ndarray:
         prepared = self._prepare_conditions(conditions)
+        # Normalize inpainting conditions from raw coordinates to model space.
+        # Integer keys are timestep indices; their values must be in the same
+        # normalized space the diffusion model was trained on.
+        norm_cond: dict[object, object] = {}
+        for k, v in prepared.items():
+            if isinstance(k, (int, np.integer)):
+                arr = np.asarray(v, dtype=float).reshape(1, -1)
+                norm_cond[k] = self.normalizer.normalize(arr)[0]
+            else:
+                norm_cond[k] = v
         return self.sample_fn(
             self.diffusion_model,
             sample_shape=(batch_size, self.horizon, self.state_dim),
             schedule=self.schedule,
             guide=self.guide,
-            condition=prepared,
+            condition=norm_cond,
             n_guide_steps=self.n_guide_steps,
             t_stopgrad=self.t_stopgrad,
             scale_grad_by_std=self.scale_grad_by_std,

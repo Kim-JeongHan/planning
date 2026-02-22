@@ -1,0 +1,1451 @@
+Motion Planning Diffusion:
+Learning and Planning of Robot Motions with Diffusion Models
+
+arXiv:2308.01557v2 [cs.RO] 26 Mar 2024
+
+João Carvalho1 , An T. Le1 , Mark Baierl1 , Dorothea Koert1,4 and Jan Peters1,2,3,4
+Abstract— Learning priors on trajectory distributions can
+help accelerate robot motion planning optimization. Given previously successful plans, learning trajectory generative models
+as priors for a new planning problem is highly desirable.
+Prior works propose several ways on utilizing this prior to
+bootstrapping the motion planning problem. Either sampling
+the prior for initializations or using the prior distribution in a
+maximum-a-posterior formulation for trajectory optimization.
+In this work, we propose learning diffusion models as priors.
+We then can sample directly from the posterior trajectory
+distribution conditioned on task goals, by leveraging the inverse
+denoising process of diffusion models. Furthermore, diffusion
+has been recently shown to effectively encode data multimodality in high-dimensional settings, which is particularly
+well-suited for large trajectory dataset. To demonstrate our
+method efficacy, we compare our proposed method - Motion
+Planning Diffusion - against several baselines in simulated
+planar robot and 7-dof robot arm manipulator environments.
+To assess the generalization capabilities of our method, we
+test it in environments with previously unseen obstacles. Our
+experiments show that diffusion models are strong priors
+to encode high-dimensional trajectory distributions of robot
+motions. https://sites.google.com/view/mp-diffusion
+
+I. I NTRODUCTION
+Motion planning is a crucial component of autonomous
+robot systems [1], [2], [3], [4]. It addresses the problem of
+finding a feasible, smooth, and collision-free path between a
+start and a goal point in a robot’s configuration space, which
+can subsequently be executed by a lower-level controller [5].
+Commonly used approaches for motion planning are either
+sampling [6], [7], [8], [9] or optimization based [2], [10],
+[11], [3]. Sampling-based methods possess a completeness
+property, assuring a global optimum given infinite compute
+time [9]. However, in practice, they often suffer from sample inefficiency and tend to produce non-smooth trajectories [12]. On the other hand, optimization-based planners
+optimize initial trajectories via either preconditioned gradient
+descent [2], [10], [11]; or stochastic update rules [3], [13] and
+can integrate desired properties such as smoothness as costs
+to be optimized. Nevertheless, optimization-based planners
+depend on a good initialization and can get trapped in local
+minima due to the non-convexity of complex problems.
+Specifically, they commonly require a good initialization
+prior and well-tuned hyperparameters to work well [11], [13].
+Recently, learning-based methods have shown promising
+potential to improve classical motion planning [14], e.g, by
+utilizing experience from previously successful plans [15],
+This work was funded by the German Federal Ministry of Education
+and Research project IKIDA (01IS20045), and by the German Research
+Foundation project METRIC4IMITATION (PE 2315/11-1). 1 Intelligent
+Autonomous Systems Lab, TU Darmstadt, Germany; 2 German Research
+Center for AI (DFKI); 3 Hessian.AI; 4 Centre for Cognitive Science
+
+Fig. 1: Execution of motions in the real-world Panda Shelf environment.
+The motion in blue and red start and end at the same configurations, but it is
+possible to see two modes resulting from sampling trajectories with MPD.
+This environment includes obstacles (represented as boxes in the digital
+twin), which are not present in the environment used for training (Fig. 2d).
+
+[16], [13] or incorporating priors from human demonstrations [17], [18], [19]. In particular, sampling from learned
+prior distributions, conditioned on contexts such as start/goal
+configurations and environmental variables, can provide good
+initializations for motion planners [13], [20], [21].
+Following the imitation learning perspective [22], in this
+work, we learn the prior model from expert data and
+incorporate it into optimization-based motion planning. In
+particular, instead of explicitly sampling from a prior distribution as motion planning initialization, we propose to
+merge the prior sampling and motion optimization into one
+algorithm, by leveraging recent formulations in diffusionbased generative models [23], [24]. This type of implicit
+model has shown impressive results in modeling multimodal
+and high-dimensional data, such as image generation [25],
+[24], [26], [27] , having superior generative performance
+(with/out context guidance) compared to previous generative
+models [28], [29]. Indeed, these diffusion model properties
+are particularly well-suited for learning from demonstrations
+in robotics manipulation settings, where state space dimensions are usually large in manipulators (e.g. full state of
+position and velocity of Franka Emika Panda arm has 14 dimensions) and there exist thousands of trajectory samples in
+the expert dataset. Furthermore, as shown later, the diffusion
+sampling process works well with gradients from standard
+motion planning costs, allowing for better and more diverse
+multimodal trajectory solutions.
+Our main contributions are: (1) we learn a trajectory generative model with a diffusion model using expert trajectories
+generated with an optimal motion planning algorithm; (2)
+we formulate the motion planning problem as planning-asinference by sampling from a posterior distribution leveraging guidance in diffusion models; (3) to validate our
+approach we present results in several environments with
+increasing difficulty; (4) we empirically demonstrate that
+learning and sampling from the diffusion model speeds up
+motion planning without an informed prior and is better than
+a commonly used generative model.
+
+II. R ELATED WORKS
+There exists a huge body of literature on learning to
+plan for robotics. In this section, we focus on discussing
+related works that combine recent learning methods with
+classic motion planning approaches (sec. II-A). Additionally,
+we provide a short background on applications of diffusion
+models [25], [24] in robotics (sec. II-B).
+A. Learning to plan for motion planning
+We survey learning methods for both sampling and
+optimization-based planners. Addressing the sampleinefficiency of sampling-based planners such as Probabilistic
+Road Maps (PRM) [6] and Rapid Exploring Random Trees
+(RRT) [7], several works have proposed learning conditional
+sampling distributions using the environment and task
+information as context variables. For instance, [15] learns
+to generate collision-free samples using a Conditional
+Variational AutoEncoder (CVAE) conditioned on an
+occupancy map. Interestingly, [30] proposes Motion
+Planning Transformers, which determines informative
+regions for sampling new nodes for RRT-like methods.
+Other works [16], [31], [32] learn a conditioned one-step
+neural planner and promote diverse solutions by adding
+dropout ensuring stochasticity. In contrast to these methods,
+we learn a trajectory distribution model to easily introduce
+trajectory time-correlated constraints such as smoothness,
+which is important in robot motions.
+Contrary to sampling-based planners, trajectory optimization methods directly optimize whole trajectories, aiming
+for smoothness while satisfying other objective constraints.
+However, they typically heavily depend on initialization
+and suffer from local minima, e.g. speeding up through
+obstacles, and thus learning better initial distributions can
+speed up and improve the success rate of these methods.
+Several works use Learning from Demonstration (LfD) (i.e.,
+Behavioral Cloning) to encode trajectory priors [18], [17],
+[19]. They fit a Gaussian Mixture Model (GMM) given a set
+of demonstrations and then use these as priors for motion
+optimization. However, GMM fitting typically cannot capture
+well multi-modal trajectories in high-dimensional spaces. For
+better learning the multi-modality of expert trajectories, [13]
+learned Energy-Based Models (EBMs) that capture expert
+data objectives. They formulate the trajectory optimization
+problem via planning-as-inference to incorporate the EBM
+priors as planning costs. In contrast to incorporating prior as
+cost, we directly learn a trajectory generator using diffusion
+models to assist the optimization, where sampling highdimensional trajectories are difficult for EBMs [33].
+B. Diffusion models for robotics
+Few works have explored using score-based and diffusion
+models in robotics. At task planning levels, [34] recently
+proposes DALL-E-B OT, which generates a text description
+from a scene image and then prompts the text-to-image
+generator DALL-E [28] for a “goal scene”, thus identifying
+the desired poses. [35] proposes StructDiffusion for arranging
+objects based on language commands, by predicting the
+object arrangements using a language-conditioned diffusion
+
+model. On learning fine-grained trajectory structure, recently,
+diffusion models have been used to generate human-like
+motions [36]. In our previous work [37], we showed a simple
+example of how to use conditioned score-based models to
+generate trajectories for different environments. Mostly similar to our work, [20] used diffusion to learn cost functions
+for jointly optimizing motion and grasping poses in SE(3).
+[38] introduced the Diffuser, a trajectory generative model
+used for planning in Offline RL and long-horizon tasks.
+[39] proposes the Decision Diffuser learned over positiononly trajectories that can be conditioned with classifierfree guidance skill generation or constraint satisfaction. In
+contrast to these works, we bring diffusion models closer to
+motion planners, by incorporating diffusion models as priors
+combined with differentiable cost likelihoods and also by
+learning higher trajectory derivatives. We show that, via our
+formulation, we can directly sample optimal trajectories from
+the posterior by following the reverse diffusion sampling
+process, contrasting to sampling from the optimized proposal
+distribution as in [13].
+III. M OTION P LANNING D IFFUSION
+In this section, we describe our method - Motion Planning
+Diffusion (MPD). First, we introduce the motion planningas-inference perspective, laying the ground for incorporating
+diffusion into motion planning. We then explain how to learn
+trajectory distributions with diffusion models. Finally, with
+MPD, we show how to sample from the trajectory posterior
+via the reverse diffusion process while incorporating the cost
+likelihood representing other motion planning objectives.
+A. Motion Planning
+Let s = [q ⊺ , q̇ ⊺ ]⊺ ⊆ Rd encode the state of a robot,
+where q is the robot’s configuration position (e.g. the joint
+space), q̇ is the robot’s configuration velocity, d is state
+space dimension. Let O represent a task (or objective)
+the robot has to perform in its environment. A trajectory
+τ ≜ (s0 , . . . , sH−1 ) ∈ RH×d represented as waypoints is a
+sequence of states in discrete-time with horizon H. In this
+work, we consider only states and assume a controller brings
+the robot from state si to si+1 , e.g., using a PD or inverse
+dynamics controller.
+In motion planning, O typically represents a task that
+encodes a collision-free path between start and goal states.
+This objective is commonly represented with a set of costs
+ci (τ ), which encode the robot’s start and goal configurations,
+the trajectory’s smoothness, and the collision-free constraint.
+Optimization-based motion planning formulates the motion
+planning problem as a trajectory optimization one [13]
+X
+τ ∗ = arg min
+λi ci (τ ),
+(1)
+τ
+
+i
+
+where λi > 0 are different weights for the costs. Common
+approaches for solving this problem are either preconditioned
+gradient methods [2], [11], which rely on carefully designed
+first-order differentiable cost functions; or stochastic methods [3], [13], which evaluate the sampled trajectories and
+update the sampling distribution by weighing the particles
+on arbitrary non-smooth and non-convex costs.
+
+B. Motion Planning as Inference
+The connection between trajectory optimization and probabilistic inference is well established [40], [41], [42], [43],
+[44], [45]. In the planning-as-inference framework, the goal
+is to sample from the posterior distribution of trajectories
+given the task objective
+p(τ |O) ∝ p(O|τ )p(τ ),
+where p(τ ) can be interpreted as a prior over trajectories in
+the environment, and p(O|τ ) is the likelihood of achieving
+the task goals. A common assumption is that the likelihood
+factorizes into independent components [13]
+Y
+p(O|τ ) ∝
+pi (oi |τ )λi
+(2)
+i
+
+with λi > 0 as temperatures of planning objective distributions [46]. Assuming pi belongs to the exponential family,
+we can arbitrarily write pi (oi |τ ) ∝ exp(−ci (τ )). Then,
+performing Maximum-a-Posteriori (MAP) on the trajectory
+posterior
+τ ∗ = arg max log p(O|τ )p(τ )
+τ
+Y
+= arg max log
+pi (oi |τ )λi + log p(τ )
+τ
+
+= arg min
+τ
+
+i
+
+X
+
+λi ci (τ ) − log p(τ )
+
+(3)
+
+i
+
+For simplicity, only the mean of the inverse
+process is learned, and the covariance is set to
+Σt = σt2 I = β̃t I, with β̃t = βt (1 − ᾱt−1 )/(1 − ᾱt ).
+[24] proposed that instead of learning the posterior
+mean directly, the
+instead, since
+ noise ε can be learned
+
+t
+µθ (τt , t) = √1αt τt − √1−α
+ε
+(τ
+,
+t)
+,
+via
+a simplified
+1−ᾱt θ t
+loss function
+
+
+L(θ) = Et,ε,τ0 ∥ε − εθ (τt , t)∥22 ,
+with √
+t ∼ U(1,
+√ N ), ε ∼ N (0, I), τ0 ∼ q(τ0 ), and
+τt = ᾱt τ0 + 1 − ᾱt ε.
+Following [38], we encode the diffusion model over trajectories with a temporal U-Net, which has proven to be a
+reasonable architecture for diffusion models over trajectories.
+Please consult [38] for details on the network architecture.
+D. Optimal sampling with guidance
+We describe how to directly sample from the posterior
+p(τ |O) using diffusion models, which is equivalent to sampling from the prior while biasing the trajectories towards the
+task likelihood. Note that τ results from the last step of the
+denoising process τ ≡ τ0 . By definition
+QN of the Markovian
+reverse diffusion p(τ0 |O) = p(τN |O) t=1 p(τt−1 |τt , t, O),
+where p(τN |O) is standard Gaussian noise by definition.
+Hence, to sample from p(τ0 |O), we iteratively sample from
+the task-conditioned posterior
+p(τt−1 |τt , t, O) ∝ p(τt−1 |τt , t)p(O|τt−1 ),
+
+(4)
+
+is equivalent to the motion planning problem (1) minus the
+log of the prior. Contrary to classical optimization-based
+motion planning, formulating motion planning as an inference problem has several advantages. Notably, the inference
+framework provides a principal way to introduce informative
+priors to planning problems, e.g., Gaussian Process Motion
+Planning (GPMP) [47], [11] utilizes a Gaussian Process (GP)
+to encode dynamic feasibility and smoothness as trajectory
+priors. In this work, we leverage this advantage to incorporate
+the learned diffusion prior encoded the expert data.
+
+where p(O|τt−1 ) = p(O|τt , τt−1 , t), i.e. we drop the conditioning on τt and t because the task is only conditioned on
+the current sample τt−1 , and pθ (τt−1 |τt , t) is modeled with
+a diffusion model parametrized by θ.
+To sample from the task-conditioned posterior
+p(τt−1 |τt , t, O), we will use a similar technique as in
+classifier guidance, since the posterior cannot be sampled in
+closed form [23], [49]. Considering the learned denoising
+prior model over trajectories is Gaussian, its logarithm
+evaluates to
+
+C. Diffusion Models as Trajectory Generative Models
+
+log pθ (τt−1 |τt , t) = log N (τt ; µt = µθ (τt , t), Σt )
+(5)
+1
+∝ − (τt−1 − µt )⊺ Σ−1
+t (τt−1 − µt ).
+2
+By definition of the noise schedule βt , as the denoising step approaches zero, so does the noise covariance
+limt→0 ∥Σt ∥ = 0. Therefore, pθ (τt−1 |τt , t) concentrates all
+the mass close to the mean µt , and therefore the task loglikelihood is approximated with a first-order Taylor expansion around µt
+
+Let us consider the unconditional diffusion model on
+trajectories. Diffusion models transform a trajectory from
+the data distribution τ0 ∼ q(τ0 ) into white Gaussian noise by running a Markovian
+forward  diffusion
+√
+process q(τt |τt−1 , t) = N τt ; 1 − βt τt−1 , βt I , where
+t = 1, . . . , N is the diffusion time step (not the trajectory
+index), N is the number of diffusion steps, and βt is the
+noise scale at time step t. Common schedules for β are linear,
+cosine or exponential [24], [48]. Assuming the data τ0 lives
+in Euclidean space, the distribution of the diffusion process
+at time step t is Gaussian
+√ and can be written in closed-form
+as q(τt |τ0Q
+, t) = N (τt ; ᾱt τ0 , (1 − ᾱt )I), with αt = 1 − βt
+t
+and ᾱt = i=1 αi . This allows sampling τt without running
+the forward diffusion process [24].
+The inverse (denoising) process transforms Gaussian
+noise back to the data distribution through a series
+of denoising steps p(τt−1 |τt , t). Diffusion models
+approximate this posterior distribution with a parametrized
+Gaussian
+pθ (τt−1 |τt , t) = N (τt−1 ; µt = µθ (τt , t), Σt ).
+
+log p(O|τt−1 ) ≈ log p(O|τt−1 = µt ) + (τt−1 − µt )g, (6)
+with g = ∇τt−1 log p(O|τt−1 )|τt−1 =µt . Combining (5)
+and (6) we obtain
+log p(τt−1 |τt , t, O)
+1
+∝ − (τt−1 − µt )⊺ Σ−1
+t (τt−1 − µt ) + (τt−1 − µt )g
+2
+1
+∝ − (τt−1 − µt − Σt g)⊺ Σ−1
+t (τt−1 − µt − Σt g)
+2
+= log p(z), with p(z) = N (z; µt + Σt g, Σt ) .
+
+Algorithm 1: Motion Planning Diffusion
+———TRAINING———
+Input: Collision-free trajectories D, Diffusion model
+εθ , learning rate α, noise schedule terms ᾱt
+1 while training is not finished do
+▷ sample a batch of trajectories
+2
+
+τ0 ∼ D , ε ∼ N (0, I) , t ∼ U(1, N )
+
+3
+4
+
+▷ compute the diffusion loss function
+√
+√
+τt = ᾱt τ0 + 1 − ᾱt ε
+L(θ) = ∥ε − εθ (τt , t)∥22
+
+5
+
+θ = θ + α∇θ L(θ)
+
+▷ gradient update
+
+———INFERENCE———
+Input: Pre-trained diffusion model εθ , start and goal
+states (ss , sg ), motion planning costs ci ,
+temperatures λi , scheduling terms (αt , ᾱt , σt )
+▷ sample a batch of trajectories
+6
+
+τN ∼ N (0, I)
+▷ hard set start and goal states
+
+τN [0] = ss , τN [H − 1] = sg
+8 for t = N, . . . , 1 do
+▷ compute the diffusion prior
+ mean
+t
+ε
+(τ
+,
+t)
+9
+µt = √1αt τt − √1−α
+1−ᾱ θ t
+
+7
+
+t
+
+▷ compute weighted gradient of costs
+10
+
+g=−
+
+P
+
+i λi ∇τt−1 ci (τt−1 = µt )
+
+▷ move trajectories to low cost regions
+11
+12
+
+τt−1 = µt + g + σt z, z ∼ N (0, I)
+τt−1 [0] = ss , τt−1 [H − 1] = sg
+Output: optimized batch of trajectories τ0
+
+Hence, sampling from the task-conditioned posterior is
+equivalent to sampling from a Gaussian distribution with
+mean and covariance as p(z). In the motion planning-asinference case, we have from (2)
+g = ∇τt−1 log p(O|τt−1 )|τt−1 =µt
+X
+=−
+λi ∇τt−1 ci (τt−1 )|τt−1 =µt ,
+i
+
+where the costs are differentiable w.r.t. the trajectory, e.g.,
+smoothness or differentiable signed distance functions.
+There are direct benefits to this formulation. While
+smoothly sampling trajectories from the diffusion prior, we
+can bias the samples towards regions that increase the task
+likelihoods, thus resulting in decreasing overall cost objective
+in (3). In motion planning, these likelihoods can be collisionfree regions, goal sets, and joint limits of the configuration
+space. In practice, to keep the influence of the task likelihood,
+we typically drop the covariance Σt scaling (cf. line 11 in
+Algorithm 1), since it approaches zero when t approaches
+0. This choice is equivalent to scaling λi = λ̃i /σt with
+time-dependent variances σt , where λ̃i are the constant
+hyperparameters, which can be interpreted as increasing
+likelihood relevancy when σt → 0. Algorithm 1 depicts the
+pseudo-code for training and inference of diffusion models
+for motion planning.
+
+E. Motion planning costs
+We briefly describe the standard motion planning costs
+used in the objective (3). Note that for cost functions defined
+on waypoints, the total costPforPa trajectory is the sum of
+H−1
+waypoint costs, i.e. c(τ ) = i j=0 ci (τ [j]).
+Start and Goal States Cost. For the diffusion model,
+the start (ss ) and goal (sg ) state distribution is represented
+as a Dirac delta, i.e., one factor of (2) for the start state
+equates to p(τ [0] = ss |τ ) = δτ [0]=ss (τ ). In practice,
+this is implemented by hard setting the initial and final
+configurations of the trajectory as in lines 7 and 12 of
+Algorithm 1 [38]. If the generative model does not support
+Dirac delta distributions, this cost can also be formulated as a
+quadratic cost, e.g. for the start state css (τ ) = ∥ss − τ [0]∥22 .
+Collision Cost. Similar to GPMP [11], we populate K collision spheres on the robot body. Given differentiable forward
+kinematics implemented in PyTorch [50], with the kinematics
+Jacobian computed by auto-differentiation,Pthe obstacle cost
+K
+1
+for any configuration q is cobs (q) = K
+j=1 c(x(q, Sj ))
+with x(q, Sj ) is the forward kinematics position of the
+j th -collision sphere. For gradient-based motion optimizers,
+we design the cost using the differentiable signed-distance
+function d(·) from the sphere center to the closest obstacle
+surface (minus the sphere
+( radius) in the task space with a
+−d(x) + ϵ if d(x) ≤ ϵ
+ϵ > 0 margin c(x) =
+.
+0
+if d(x) > ϵ
+Self-collision Cost. We group the collision spheres that
+belong to the same robot links. Then, we compute the pairwise link sphere distances. The self-collision cost is the
+average of the computed pair-wise distances.
+Joint Limits Cost. We enforce joint limits (and velocity
+limits) by computing the L2 norm joint violations as costs,
+with a ϵ > 0 margin on each dimension i
+
+∥qmin + ϵ − qi ∥22 if qi < qmin + ϵ
+if qmin + ϵ ≤ qi ≤ qmax − ϵ .
+climits (qi ) = 0
+
+2
+∥qmax − ϵ − qi ∥2
+
+else
+
+End-effector Cost. The distance on SE(3) state space
+defines the end-effector cost. Given two points T1 = [R1 , p1 ]
+and T2 = [R2 , p2 ] in SE(3), consisting of a translational and
+rotational part, we choose the following distance on SE(3)
+dSE(3) (T1 , T2 ) = ∥p1 − p2 ∥22 + ∥LogMap(R1⊺ R2 )∥, where
+LogMap(·) is the operator that maps an element of SO(3) to
+its tangent space [51]. Then, given the current end-effector
+pose T (q) computed via forward kinematics and the goal
+pose Tg , the end-effector cost is
+cee (q) = dSE(3) (T (q), Tg ).
+(7)
+Gaussian Process Cost. The uncontrolled trajectory
+distribution can be represented as the zero-mean GP
+prior [52], [11] qF (τ ) = N (τ ; 0, K), with a constant
+time discretization ∆t, and time-correlated covariance matrix
+K = [K(i, j)] ij,0≤i,j≤H−1 , K(i, j) ∈ Rd×d . We can factorize the GP prior by following [52], i.e.,
+Y
+ H−1
+1
+qt (st , st+1 ),
+qF (τ ) ∝ exp − ∥τ ∥2K −1 ∝
+2
+t=0
+
+with each binary GP factor defined as
+n 1
+o
+qt (st , st+1 ) ∝ exp − ∥Φt,t+1 st − st+1 ∥2Q−1
+,
+t,t+1
+2
+with Φt,t+1 the state transition matrix, and Qt,t+1 the
+covariance between time steps t and t + 1. In this work, we
+assume a holonomic system model and the state transition
+and covariance matrices are
+
+1 3
+h
+i
+∆t Qc 12 ∆t2 Qc
+I ∆tI
+3
+Φt,t+1 = 0
+,
+Q
+=
+2
+t,t+1
+1
+I
+2
+
+∆t Qc
+
+∆tQc
+
+respectively, with Qc the power-spectral density matrix. Via
+the planning-as-inference perspective, the GP cost is
+H
+
+cGP (τ ) = − log qF (τ ) =
+
+1X
+∥Φt,t+1 st − st+1 ∥2Q−1 .
+t,t+1
+2 t=0
+
+In essence, this cost promotes dynamic feasibility and
+smoothness. More details on GP priors can be found in [52].
+Note that we can introduce further costs, such as manipulability, depending on task requirements.
+IV. E XPERIMENTS
+To verify the advantages of our approach, we perform
+experiments to answer the following questions: (1) Can the
+diffusion model learn collision-free high-dimensional and
+highly-multimodal trajectory distributions? (2) How does
+the diffusion model prior compares to a commonly used
+Conditional Variational AutoEncoder (CVAE) as a trajectory
+generative model? (3) Can our approach generate collisionfree trajectories in the presence of obstacles not seen during
+training? (4) Does merging sampling from the prior while biasing samples with cost gradients improve results, compared
+to other generative models that first sample from the prior
+and then optimize the likelihood? (5) Is the diffusion model
+a good prior for optimization-based planning algorithms?
+A. Experimental Setup
+Environments. We consider different environments reflecting increasing difficulty, as depicted in Fig. 2. PointMass2D Dense is a 2D planar navigation environment with
+randomly placed spheres and boxes that a point mass robot
+has to navigate. PointMass3D Maze Boxes is a 3D maze
+environment with boxes and narrow passages. Panda Spheres
+has a 7-dof Franka Emika Panda robot and uniformly random
+spheres in its workspace, which benchmarks planners in
+higher-dimensional and non-trivial collision-free configuration space manifold. Panda Shelf has a 7-dof Panda robot
+placed on a working bench and with a nearby shelf, which
+replicates realistic tasks as a proof-of-concept of our method.
+The trajectory generative models (diffusion and CVAE) are
+trained with expert data generated from these environments.
+To test the generalization capabilities of the learning-based
+methods, all environments are extended with additional
+sphere and box obstacles that are not present during training
+- identified with the suffix “Extra Obstacles”.
+Tasks. In all environments, the task is to find a collisionfree and smooth trajectory starting and finishing at random
+configuration-space positions qstart and qgoal , which do not
+
+result in a task-space collision. In the real-world Panda
+Shelf environment, besides finding a collision-free path, we
+additionally add an extra cost to maintain the end-effector
+orientation constant along P
+the trajectory. Using (7), the
+H−1
+trajectory cost is cEE (τ ) = k=0 dSE(3) ((T (q[k]), Tg [k])),
+where T (q[k]) is the end-effector pose at waypoint k and
+Tg [k] the desired one. Since we only want to enforce the
+orientations, we only set the desired goal orientation and
+copy the desired end-effector position from the waypoint
+position, i.e., T (q[k]) = [Rk , pk ], Tg [k] = [Rg , pk ].
+Algorithms and Baselines. We denote the diffusion model
+trained over collision-free trajectories as D IFFUSION P RIOR,
+and our proposed approach of sampling with cost guidance
+(sec. III-D) as MPD. These methods are compared against
+a set of baselines to showcase different properties. A simple
+baseline is a sample-based method RRTConnect [8]. We
+modify this algorithm in several ways to fully use the GPU
+parallelization capabilities: at the start of optimization, we
+pre-compute a buffer of collision-free configurations (the
+computation time of this operation is negligible due to
+parallelization); a sample is removed from the buffer when
+added to the search tree; the buffer is refilled when there are
+no samples left; and computing the nearest neighbor node is
+done in parallel using the GPU. These improvements lead to
+very fast planning for RRTConnect.
+On the choice of the optimization-based planner, we use
+GPMP (i.e., GPMP2 in [11]) without an informative prior a constant-velocity straight line connecting the start and goal
+configurations. On conditional trajectory generative model as
+a baseline, we learn a Conditional Variational AutoEncoder
+(CVAE) [53], [15], denoted as CVAEPrior. For a fair comparison, the encoder and decoder networks are the same as the
+encoding and decoding parts of the U-Net diffusion model.
+The conditioning variable is the start and goal configurations.
+These are stacked with the learned trajectory representation
+of the encoder and then passed through a neural network
+to encode a Gaussian posterior in the latent space. We
+ran a hyperparameter search on the latent space dimension,
+learning rate, and the KL regularization multiplier and chose
+the model with the best validation loss on the same dataset
+used to train the diffusion model. We analyze sampling
+from this prior first and afterward optimize the trajectory
+cost likelihood - this method is named CVAEPosterior. The
+number of optimization steps is equivalent to the one MPD
+uses. We use the same cost temperatures λi for both MPD
+and CVAEPosterior. Finally, the learned diffusion and CVAE
+models can be used as a prior for GPMP, as well as a simple
+RRTConnect prior, which can be a way to provide an initial
+trajectory for optimization-based motion planning [2]. These
+are referred to as [Prior]-GPMP. If RRTConnect is used as
+a prior, we smoothen that solution using B-splines before
+passing it to GPMP.
+Metrics. A set of commonly used metrics for planning
+evaluation are used. For all metrics, we report the mean
+and standard deviation of motion planning results of 100
+random contexts (start and goal configuration-free positions)
+when sampling 100 trajectories per context. Note that for
+algorithms that use RRTConnect, the trajectories for each
+
+(a) PointMass2D Dense
+
+(b) PointMass3D Maze Boxes
+
+(c) Panda Spheres
+
+(d) Panda Shelf
+
+Fig. 2: The environments considered in our experiments include robot navigation tasks of a point mass in 2D and 3D, and a 7-dof Franka Emika Panda
+manipulator. In (a) and (b), the green and red dots are the initial and goal states, respectively, and the blue line is the result of RRT Connect.
+TABLE I: Motion planning generation benchmarks in the environments of the training set, and additional environments with extra obstacles. ↑ means
+higher is better. ↓ means lower is better. Values highlighted in bold are discussed in the main text. Legend: RRTC – RRTConnect, CPrior – CVAE Prior,
+DPrior – Diffusion Prior, CPost – CVAE Posterior Optimization, MPD – Motion Planning Diffusion
+PointMass2D Dense
+
+PointMass2D Dense - Extra Obstacles
+
+T[s] ↓
+
+S[%] ↑
+
+I[%] ↓
+
+PL ↓
+
+RRTC
+4.7 ± 2.5
+CPrior
+.02 ± .2
+DPrior
+.3 ± .0
+GPMP
+26.5 ± .2
+RRTC-GPMP 38.43 ± 30.9
+CPrior-GPMP
+25.3 ± .2
+DPrior-GPMP
+26.0 ± .3
+CPost
+.1 ± .1
+MPD
+.3 ± .0
+
+100.0 ± .0
+46.0 ± 49.5
+98.0 ± 14.0
+52.0 ± 49.7
+100.0 ± .0
+71.0 ± 45.4
+99.0 ± 10.0
+88.0 ± 32.5
+99.0 ± 10.
+
+.0 ± .0
+11.8 ± 12.5
+5.5 ± 06.2
+1.7 ± 1.3
+.0 ± 0.0
+0.9 ± 01.8
+.3 ± .6
+.3 ± .7
+.6 ± 1.2
+
+1.9 ± .5
+1.5 ± .4
+1.6 ± .5
+1.4 ± .4
+1.94 ± .5
+1.4 ± .5
+1.6 ± .5
+1.5 ± .4
+1.7 ± .5
+
+T[s] ↓
+
+S[%] ↑
+
+I[%] ↓
+
+PL ↓
+
+RRTC
+27.4 ± 26.1
+CPrior
+.02 ± .1
+DPrior
+.3 ± .0
+GPMP
+47.4 ± .1
+RRTC-GPMP 114.6 ± 56.9
+CPrior-GPMP
+47.5 ± .3
+DPrior-GPMP
+48.3 ± .2
+CPost
+.1 ± .2
+MPD
+.3 ± .01
+
+100.0 ± .0
+8.0 ± 27.1
+54.0 ± 49.8
+16.0 ± 36.7
+100.0 ± .0
+8.0 ± 27.1
+39.0 ± 48.8
+50.0 ± 50.0
+85.0 ± 35.7
+
+.0 ± .0
+29.1 ± 15.1
+15.5 ± 11.7
+32.3 ± 16.6
+2.2 ± 1.3
+27.7 ± 15.3
+14.4 ± 7.7
+01.4 ± 01.4
+2.0 ± 1.8
+
+T[s] ↓
+
+S[%] ↑
+
+RRTC
+42.9 ± 18.8
+CPrior
+.02 ± .1
+DPrior
+.3 ± .0
+GPMP
+194.4 ± .1
+RRTC-GPMP 230.4 ± 14.4
+CPrior-GPMP
+191.6 ± .3
+DPrior-GPMP
+192.3 ± .1
+CPost
+.8 ± .1
+MPD
+1.1 ± .01
+
+100.0 ± .0
+36.0 ± 48.0
+88.0 ± 32.5
+42.0 ± 49.4
+100.0 ± .0
+34.0 ± 47.4
+100.0 ± .0
+70.0 ± 45.8
+100.0 ± .0
+
+T[s] ↓
+
+S[%] ↑
+
+RRTC
+29.9 ± 8.3
+CPrior
+.03 ± .2
+DPrior
+.3 ± .0
+GPMP
+192.1 ± .1
+RRTC-GPMP 218.3 ± 7.0
+CPrior-GPMP
+192.9 ± .1
+DPrior-GPMP 192.3 ± .1
+CPost
+.8 ± .1
+MPD
+1.0 ± .01
+
+100.0 ± .0
+92. ± 27.1
+100.0 ± .0
+88.0 ± 32.5
+100.0 ± .0
+94.0 ± 23.8
+100.0 ± .0
+93.0 ± 25.5
+100.0 ± .0
+
+VAR ↑
+
+T[s] ↓
+
+S[%] ↑
+
+I[%] ↓
+
+PL ↓
+
+VAR ↑
+
+.0 ± .0
+1.3 ± 1.0
+.03 ± .03
+2.2 ± .9
+.01 ± .02
+1.4 ± 1.1
+.01 ± .02
+1.4 ± 1.0
+
+8.0 ± 3.5
+.02 ± .2
+.3 ± .0
+26.5 ± .2
+42.5 ± 7.2
+26.0 ± .2
+27.0 ± .3
+.1 ± .1
+.3 ± .0
+
+100.0 ± .0
+14.0 ± 34.7
+60.0 ± 49.0
+49.0 ± 50.0
+100.0 ± .0
+53.0 ± 49.9
+92.0 ± 27.1
+78.0 ± 41.4
+79.0 ± 40.7
+
+.0 ± .0
+24.3 ± 14.7
+16.0 ± 10.5
+1.1 ± 1.5
+0.0 ± 0.1
+01.1 ± 01.7
+.7 ± .8
+.5 ± .7
+10.3 ± 8.5
+
+2.2 ± .6
+1.6 ± .4
+1.5 ± .5
+1.4 ± .4
+2.0 ± .5
+1.5 ± .5
+1.6 ± .5
+1.62 ± .5
+1.7 ± .4
+
+.0 ± .0
+1.3 ± 1.0
+.03 ± .04
+2.7 ± .9
+.02 ± .03
+1.4 ± .9
+.01 ± .02
+1.4 ± 1.0
+
+PointMass3D Maze Boxes
+
+PointMass3D Maze Boxes - Extra Obstacles
+VAR ↑
+
+T[s] ↓
+
+S[%] ↑
+
+I[%] ↓
+
+PL ↓
+
+VAR ↑
+
+3.7 ± 1.8
+2.3 ± .8
+2.1 ± .7
+1.5 ± .5
+4.1 ± 1.6
+2.2 ± .8
+2.2 ± .8
+2.3 ± .7
+2.4 ± .7
+
+.01 ± .02
+4.1 ± 3.9
+.01 ± .0
+5.5 ± 3.0
+.01 ± .03
+4.3 ± 4.1
+.02 ± .03
+4.2 ± 4.0
+
+32.0 ± 27.4
+.02 ± .1
+.3 ± .0
+48.5 ± .1
+111.2 ± 52.4
+47.9 ± .3
+49.0 ± .2
+.1 ± .2
+.3 ± .01
+
+100.0 ± .0
+4.0 ± 19.6
+51.0 ± 50.0
+19.0 ± 39.2
+100.0 ± .0
+11.0 ± 31.3
+43.0 ± 49.5
+52.0 ± 50.0
+82.0 ± 38.4
+
+.0 ± .0
+27.9 ± 14.
+14.8 ± 8.4
+31.2 ± 17.9
+2.4 ± 1.1
+29.0 ± 16.3
+15.1 ± 8.5
+01.3 ± 01.5
+3.1 ± 2.1
+
+4.0 ± 1.7
+2.2 ± .8
+2.2 ± .8
+1.4 ± .4
+3.9 ± 1.4
+2.1 ± .7
+2.1 ± .8
+2.2 ± .7
+2.4 ± .8
+
+.01 ± .02
+4.1 ± 4.1
+.01 ± .0
+5.59 ± 3.1
+.01 ± .03
+4.2 ± 3.9
+.02 ± .03
+4.2 ± 4.1
+
+I[%] ↓
+
+PL ↓
+
+VAR ↑
+
+T[s] ↓
+
+S[%] ↑
+
+I[%] ↓
+
+PL ↓
+
+VAR ↑
+
+.04 ± .08
+14.9 ± 15.0
+11.5 ± 6.0
+4.1 ± 4.8
+02.4 ± 02.7
+5.2 ± 5.7
+4.0 ± 2.6
+.7 ± 1.0
+1.2 ± .8
+
+12.1 ± 2.8
+5.4 ± 1.0
+7.8 ± 1.4
+5.1 ± 1.2
+7.9 ± 1.4
+5.1 ± .9
+6.8 ± 1.2
+8.0 ± 1.3
+9.9 ± 1.2
+
+.02 ± .00
+17.3 ± 5.0
+.02 ± .05
+18.7 ± 5.6
+.03 ± .06
+15.6 ± 3.5
+.03 ± .04
+17.4 ± 3.9
+
+90.2 ± 103.6
+.02 ± .1
+.3 ± .0
+194.5 ± .2
+253.6 ± 58.7
+194.2 ± .1
+192.1 ± .1
+.8 ± .1
+1.1 ± .01
+
+100.0 ± .0
+10.0 ± 30.0
+78.0 ± 41.4
+28.0 ± 44.9
+96.0 ± 19.6
+18.0 ± 38.4
+82.0 ± 38.4
+45.0 ± 49.8
+93.0 ± 25.5
+
+0.05 ± 0.05
+35.2 ± 24.6
+23.9 ± 7.4
+9.6 ± 8.2
+4.1 ± 2.8
+12.3 ± 10.3
+7.8 ± 3.8
+1.5 ± 1.7
+12.5 ± 7.6
+
+13.2 ± 3.8
+5.4 ± 1.2
+7.5 ± 1.6
+5.1 ± 1.3
+8.0 ± 1.4
+5.1 ± 1.1
+7.1 ± 1.0
+8.0 ± 1.2
+10.0 ± 1.2
+
+.01 ± .01
+18.0 ± 4.2
+.03 ± .12
+20.6 ± 7.2
+.04 ± .06
+16.0 ± 3.6
+.1 ± .1
+18.0 ± 4.
+
+I[%] ↓
+
+PL ↓
+
+VAR ↑
+
+T[s] ↓
+
+S[%] ↑
+
+I[%] ↓
+
+PL ↓
+
+VAR ↑
+
+0.04 ± 0.11
+1.8 ± 6.5
+3.6 ± 4.8
+.5 ± 1.6
+.4 ± .9
+.6 ± 2.6
+0.9 ± 1.1
+0.1 ± 0.4
+0.6 ± 0.9
+
+11.2 ± 2.4
+4.8 ± .9
+7.6 ± 1.2
+5.1 ± 1.3
+8.1 ± 1.1
+4.4 ± .9
+7.1 ± 1.1
+7.4 ± 1.2
+9.3 ± 1.0
+
+.02 ± .0
+14.5 ± 3.4
+.01 ± .02
+16.7 ± 3.8
+.01 ± .00
+13.8 ± 2.9
+.02 ± .04
+14.8 ± 3.2
+
+31.5 ± 9.4
+.03 ± .1
+.3 ± .0
+193.1 ± .13
+228.2 ± 20.1
+194.3 ± .2
+192.6 ± .1
+.8 ± .1
+1.0 ± .01
+
+99.0 ± 10.0
+68.0 ± 46.7
+100.0 ± .0
+82. ± 38.42
+98.0 ± 14.0
+60. ± 49.0
+98.0 ± 14.0
+83.0 ± 37.6
+99.0 ± 10.0
+
+2.2 ± 4.5
+8.3 ± 14.1
+5.9 ± 7.3
+2.0 ± 5.1
+1.5 ± 2.1
+3.3 ± 5.7
+2.3 ± 2.4
+0.5 ± 1.1
+4.1 ± 4.9
+
+11.5 ± 2.9
+4.6 ± .8
+7.6 ± 1.3
+5.1 ± 1.4
+7.9 ± 1.5
+4.5 ± .8
+6.9 ± 1.2
+10.8 ± 6.8
+9.4 ± 1.1
+
+.01 ± .00
+14.3 ± 3.7
+.01 ± .01
+18.3 ± 6.0
+.03 ± .04
+14.0 ± 3.1
+2.4 ± 5.2
+15.1 ± 3.5
+
+Panda Spheres
+
+Panda Spheres - Extra Obstacles
+
+Panda Shelf
+
+Panda Shelf - Extra Obstacles
+
+context are sampled sequentially since GPU batch parallelization is not trivial for these methods. To assess the speed
+of RRTConnect in generating a single collision-free path, the
+reported times can be divided by 100, making the algorithm,
+on average, faster than one second. Time (T) - is the planner’s
+computational time to generate/optimize the required number
+of trajectories. Success (S) - is the success rate, which is 1
+if at least one of the trajectories in the batch is collisionfree, and 0 otherwise. Intensity (I) - is the percentage of the
+
+waypoints that are in collision, which assesses the ability to
+generate almost-collision-free trajectories. Path Length (PL)
+- is the trajectory length. Waypoint variance (VAR) - is the
+sum (along the trajectory dimension) of the pairwise L2distance variance between waypoints at corresponding time
+steps. This metric measures how multimodal (spread) the
+generated trajectories are.
+Dataset generation and training. To generate multimodal
+and collision-free expert data trajectories in each environ-
+
+(a) Diffusion Step 0
+
+(b) Diffusion Step 10
+
+(c) Diffusion Step 20
+
+(d) Diffusion Step 25
+
+(e) CVAE
+
+Fig. 3: (a)-(d) Diffusion steps of MPD on a batch of 100 trajectories in the PointMass2D Dense - Extra Obstacles environment. Notice how noise
+transforms into multimodal, smooth and collision-free trajectories. (e) Trajectories generated by CVAEPosterior. Obstacles in red were not present in the
+training environment. Trajectories in orange are collision-free, black in collision. The start and goal configurations are in green and blue.
+
+ment, we sample 500 random start and goal context configurations and 20 trajectories per context. We use RRTConnect
+to get a rough initial solution, then smoothen it using a
+B-spline, and run many optimization steps of StochasticGPMP [13] to create collision-free and smooth trajectories,
+similar as [54]. This process is costly but done offline once.
+The data is split into training and validation datasets (5% of
+the data). The input to the diffusion and CVAE models is
+a trajectory of dimension H × d, with H the horizon and
+d the state-space dimension, e.g., we used H = 64 and
+d = 14 in the panda environments. The horizon value is a
+hyperparameter, but 64 was sufficient for the motion planning
+tasks we considered. The diffusion models are trained for
+25 diffusion steps with exponential scheduling (we found it
+to work better than linear scheduling [24]). The models are
+trained using early stopping by inspecting the validation loss.
+Implementation. For maximal parallelization, all environments, algorithms, and costs were implemented in PyTorch [50] utilizing the GPU. The experiments were conducted on a machine with an AMD EPYC 7453 28-Core
+Processor and NVIDIA GeForce RTX 3090.
+B. Results in Simulation
+The summarized results from planning in simulated environments are detailed in Table I. To answer our first and
+second questions, we look into the environments from the
+training set and observe that DiffusionPrior can generate
+more collision-free trajectories than the baseline CVAEPrior.
+E.g., in the PointMass2D Dense environment, the success
+rate is 98% vs. 46%. Moreover, the diffusion model can
+produce more multimodal trajectories, as the variance column shows. Empirically, we observed that across different
+planning problems, the CVAE models tended to generate
+fewer modes than the ones from the diffusion.
+To assess questions 3 and 4, we look into the environments
+with the suffix “Extra Obstacles”, where new obstacles not
+seen during training are placed randomly in the environment.
+First, we observe that the success rate by sampling only
+from the priors decreases, which is expected since they were
+not trained in these environments. Note that in the Panda
+Shelf environment, the success rate of DiffusionPrior does
+not decrease from 100%, but the collision intensity increases
+from 3.6% to 5.9%. Observing the success rates of MPD
+and comparing them to CVAEPosterior, we see that using the
+diffusion model in combination with the cost gradients yields
+better results in terms of success rate and multimodality
+(as the variance measures the spread of the distribution).
+This phenomenon can be seen in Fig. 3, where we compare
+
+the optimization with the diffusion and CVAE models. A
+common criticism of diffusion models is their sampling time.
+However, for motion planning, the computation times of both
+methods for the Panda environments are comparable since
+most of the cost is spent in the gradient computation of the
+cost and not in the diffusion sampling.
+Finally, we check if the diffusion samples act as a good
+prior for GPMP. Across all environments, using the model
+samples as initialization for GPMP generated higher success
+rates and multimodal trajectories compared to running GPMP
+with a constant velocity straight-line mean prior. The low
+success rate of GPMP is more noticeable in environments
+where the collision-free space manifold is very complex, as
+in the PointMass2D Dense environment. The larger compute
+times of algorithms using GPMP are due to running this
+algorithm with a large batch of trajectories since at every
+time-step it solves a trust region gradient.
+The sampling times for RRTConnect include sequentially
+sampling trajectories using the GPU since, as noted before,
+parallelization of RRT-like algorithms for a batch is not trivial. Even though RRTConnect also is a fast prior for GPMP,
+it generally produces high-jerk trajectories with higher path
+lengths, which would need more optimization steps of GPMP
+to achieve the same level of the DiffusionPrior.
+C. Results in the Real World Panda Shelf
+We test our method in a real-world task where a robot
+moves a bottle while avoiding obstacles not present in the
+training set and maintaining a constant end-effector orientation. We approximate the new obstacles (cf. Fig. 1) as box
+models. With the robot in gravity compensation mode, we
+record 3 different initial configurations and one desired goal
+configuration. For each start-goal pair, we sampled 10 trajectories with the MPD, filtered the ones in collision, obtaining
+25 collision-free trajectories, and without selecting them with
+respect to any criteria, ran them in the real robot using a
+joint impedance controller. We obtained 19/25 collisionfree trajectories, demonstrating our method’s efficacy of
+generating diverse success solutions. We hypothesize that the
+remaining 6 trajectories that collided with the new obstacles
+are due to the approximated robot (spheres) collision model.
+V. C ONCLUSION AND F UTURE W ORK
+In this paper, we proposed using diffusion models as
+priors for bootstrapping motion planning problems, via the
+planning-as-inference perspective. We parameterize a trajectory with waypoints and construct a generative model over
+the whole trajectory. We train this model via supervised
+
+learning on motion plans generated with an optimal planner.
+At inference time, instead of sampling trajectories from the
+prior to only initialize an optimization-based motion planner,
+we propose to use the guidance properties of diffusion
+models to concurrently sample from the prior and bias these
+samples towards regions of low cost (high likelihood).
+Our results show several benefits of diffusion models. Due
+to their modeling capabilities, diffusion models are better priors for motion planning because they can encode multimodal
+trajectories better than commonly used CVAEs. Sampling
+from the learned prior while optimizing the likelihood leads
+to improved results in finding collision-free trajectories.
+Future work will include continuing to extend the usage
+of diffusion models to encode different parametrizations of
+trajectories for robotic movements.
+R EFERENCES
+[1] S. M. LaValle, Planning Algorithms. Cambridge, U.K.: Cambridge
+University Press, 2006.
+[2] N. Ratliff, M. Zucker, J. A. Bagnell, and S. Srinivasa, “Chomp:
+Gradient optimization techniques for efficient motion planning,” in
+IEEE International Conference on Robotics and Automation, 2009.
+[3] M. Kalakrishnan, S. Chitta, E. Theodorou, P. Pastor, and S. Schaal,
+“Stomp: Stochastic trajectory optimization for motion planning,” in
+IEEE International Conference on Robotics and Automation, 2011.
+[4] M. Elbanhawi and M. Simic, “Sampling-based robot motion planning:
+A review,” IEEE Access, vol. 2, pp. 56–77, 2014.
+[5] K. Lynch and F. Park, Modern Robotics: Mechanics, Planning, and
+Control. Cambridge Univeristy Press, 2017.
+[6] L. Kavraki, P. Svestka, J.-C. Latombe, and M. Overmars, “Probabilistic
+roadmaps for path planning in high-dimensional configuration spaces,”
+IEEE Transactions on Robotics and Automation, 1996.
+[7] S. M. Lavalle, “Rapidly-exploring random trees: A new tool for path
+planning,” 1998.
+[8] J. Kuffner and S. LaValle, “Rrt-connect: An efficient approach to
+single-query path planning,” in IEEE ICRA, 2000.
+[9] S. Karaman and E. Frazzoli, “Sampling-based algorithms for optimal
+motion planning,” IJRR, vol. 30, no. 7, pp. 846–894, 2011.
+[10] J. Dong, M. Mukadam, F. Dellaert, and B. Boots, “Motion planning
+as probabilistic inference using Gaussian processes and factor graphs,”
+in RSS, 2016.
+[11] M. Mukadam, J. Dong, X. Yan, F. Dellaert, and B. Boots, “Continuoustime gaussian process motion planning via probabilistic inference,” Int.
+J. Robotics Res., vol. 37, no. 11, 2018.
+[12] K. K. Hauser and V. Ng-Thow-Hing, “Fast smoothing of manipulator
+trajectories using optimal bounded-acceleration shortcuts.” in ICRA.
+IEEE, 2010, pp. 2493–2498.
+[13] J. Urain, A. Le, A. Lambert, G. Chalvatzaki, B. Boots, and J. Peters,
+“Learning implicit priors for motion optimization,” in IEEE/RSJ
+International Conference on Intelligent Robots and Systems, 2022.
+[14] J. Wang et al., “A survey of learning-based robot motion planning,”
+IET Cyber-Systems and Robotics, vol. 3, no. 4, pp. 302–314, 2021.
+[15] B. Ichter, J. Harrison, and M. Pavone, “Learning sampling distributions
+for robot motion planning,” in IEEE ICRA, 2018.
+[16] A. H. Qureshi, A. Simeonov, M. J. Bency, and M. C. Yip, “Motion
+planning networks,” in IEEE ICRA, 2019.
+[17] D. Koert, G. Maeda, R. Lioutikov, G. Neumann, and J. Peters,
+“Demonstration based trajectory optimization for generalizable robot
+motions,” in IEEE-RAS Humanoids, 2016, pp. 515–522.
+[18] M. A. Rana, M. Mukadam, S. R. Ahmadzadeh, S. Chernova, and
+B. Boots, “Towards robust skill generalization: Unifying learning from
+demonstration and motion planning,” in CoRL. PMLR, 2017.
+[19] A. T. Le et al., “Learning forceful manipulation skills from multimodal human demonstrations,” in IEEE/RSJ IROS, 2021.
+[20] J. Urain, N. Funk, J. Peters, and G. Chalvatzaki, “Se(3)-diffusionfields:
+Learning smooth cost functions for joint grasp and motion optimization through diffusion,” in IEEE ICRA, 2023.
+[21] J. Ortiz-Haro, J.-S. Ha, D. Driess, and M. Toussaint, “Structured deep
+generative models for sampling on constraint manifolds in sequential
+manipulation,” in CoRL. PMLR, 2022.
+
+[22] T. Osa, J. Pajarinen, G. Neumann, J. A. Bagnell, P. Abbeel, and
+J. Peters, “An algorithmic perspective on imitation learning,” Found.
+Trends Robotics, vol. 7, no. 1-2, pp. 1–179, 2018.
+[23] J. Sohl-Dickstein, E. A. Weiss, N. Maheswaranathan, and S. Ganguli,
+“Deep unsupervised learning using nonequilibrium thermodynamics,”
+in ICML. JMLR.org, 2015.
+[24] J. Ho, A. Jain, and P. Abbeel, “Denoising diffusion probabilistic
+models,” in NeurIPS. Curran Associates Inc., 2020.
+[25] Y. Song and S. Ermon, “Generative modeling by estimating gradients
+of the data distribution,” in NeurIPS, 2019.
+[26] R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer,
+“High-resolution image synthesis with latent diffusion models,” 2021.
+[27] G. Kim, T. Kwon, and J. C. Ye, “Diffusionclip: Text-guided diffusion
+models for robust image manipulation,” in IEEE/CVF CVPR, 2022.
+[28] A. Ramesh et al., “Hierarchical text-conditional image generation
+with clip latents,” 2022. [Online]. Available: https://arxiv.org/abs/
+2204.06125
+[29] P. Dhariwal and A. Nichol, “Diffusion models beat gans on image
+synthesis,” 2021.
+[30] J. J. Johnson et al., “Motion planning transformers: A motion
+planning framework for mobile robots,” 2021. [Online]. Available:
+https://arxiv.org/abs/2106.02791
+[31] A. H. Qureshi and M. C. Yip, “Deeply informed neural sampling for
+robot motion planning,” in IEEE/RSJ IROS, 2018.
+[32] J. Wang, W. Chi, C. Li, C. Wang, and M. Q.-H. Meng, “Neural rrt*:
+Learning-based optimal path planning,” IEEE T-ASE, 2020.
+[33] W. Grathwohl, J. Kelly, M. Hashemi, M. Norouzi, K. Swersky, and
+D. Duvenaud, “No mcmc for me: Amortized sampling for fast and
+stable training of energy-based models,” 2020.
+[34] I. Kapelyukh, V. Vosylius, and E. Johns, “Dall-e-bot: Introducing webscale diffusion models to robotics,” 2022.
+[35] W. Liu, T. Hermans, S. Chernova, and C. Paxton, “Structdiffusion:
+Object-centric diffusion for semantic rearrangement of novel objects,”
+2022. [Online]. Available: https://arxiv.org/abs/2211.04604
+[36] E. J. C. Findlay, H. Zhang, Z. Chang, and H. P. H. Shum, “Denoising
+diffusion probabilistic models for styled walking synthesis,” 2022.
+[Online]. Available: https://arxiv.org/abs/2209.14828
+[37] J. Carvalho, M. Baierl, J. Urain, and J. Peters, “Conditioned scorebased models for learning collision-free trajectory generation,” in
+NeurIPS 2022 Workshop on Score-Based Methods, 2022.
+[38] M. Janner, Y. Du, J. Tenenbaum, and S. Levine, “Planning with
+diffusion for flexible behavior synthesis,” in ICML, 2022.
+[39] A. Ajay et al., “Is conditional generative modeling all you
+need for decision-making?” 2022. [Online]. Available: https:
+//arxiv.org/abs/2211.15657
+[40] H. Attias, “Planning by probabilistic inference,” in Proceedings of the
+Ninth International Workshop on Artificial Intelligence and Statistics,
+vol. R4. PMLR, 2003, pp. 9–16.
+[41] M. Toussaint, “Robot trajectory optimization using approximate inference,” in ICML. Association for Computing Machinery, 2009.
+[42] S. Levine, “Reinforcement learning and control as probabilistic inference: Tutorial and review,” 2018.
+[43] J. Peters, K. Mülling, and Y. Altün, “Relative entropy policy search,”
+in AAAI. AAAI Press, 2010.
+[44] J. Watson, H. Abdulsamad, and J. Peters, “Stochastic optimal control
+as approximate input inference,” in CoRL. PMLR, 2019.
+[45] J. Watson and J. Peters, “Inferring smooth control: Monte carlo
+posterior policy iteration with gaussian processes,” in CoRL, 2022.
+[46] A. T. Le, K. Hansel, J. Peters, and G. Chalvatzaki, “Hierarchical policy
+blending as optimal transport,” in arXiv preprint arXiv:2212.01938,
+2022.
+[47] J. Dong, M. Mukadam, B. Boots, and F. Dellaert, “Sparse Gaussian
+processes on matrix Lie groups: A unified framework for optimizing
+continuous-time trajectories,” in IEEE ICRA, 2018.
+[48] A. Q. Nichol and P. Dhariwal, “Improved denoising diffusion probabilistic models,” in ICML. PMLR, 2021.
+[49] P. Dhariwal and A. Q. Nichol, “Diffusion models beat gans on image
+synthesis,” in NeurIPS, 2021, pp. 8780–8794.
+[50] A. Paszke et al., “Pytorch: An imperative style, high-performance deep
+learning library,” in NeurIPS. Curran Associates, Inc., 2019.
+[51] J. Sola, J. Deray, and D. Atchuthan, “A micro lie theory for state
+estimation in robotics,” arXiv preprint arXiv:1812.01537, 2018.
+[52] T. D. Barfoot, C. H. Tong, and S. Särkkä, “Batch continuous-time
+trajectory estimation as exactly sparse gaussian process regression.”
+in RSS, 2014.
+
+[53] K. Sohn, H. Lee, and X. Yan, “Learning structured output representation using deep conditional generative models,” in NeurIPS, vol. 28.
+Curran Associates, Inc., 2015.
+[54] M. Bhardwaj, B. Boots, and M. Mukadam, “Differentiable gaussian
+process motion planning,” in IEEE ICRA, 2020.
+
+

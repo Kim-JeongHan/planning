@@ -222,30 +222,50 @@ uv run python examples/informed_rrt_star_example.py
 
 ---
 
-### 8. Diffuser-based one-shot trajectory generation
+### 8. Diffuser (Guided Diffusion Planning)
 
-- 8.1) Diffusion policy one-shot trajectory generation (new local workflow)
+Trajectory planning by reverse diffusion with value-guided sampling. A diffusion model learns
+the distribution of collision-free trajectories; at planning time a value model steers each
+denoising step toward high-reward trajectories via gradient guidance (Algorithm 1 in the paper).
+
+Note: this codebase does **not** apply an additional reward-correction stage during training
+(for example, reweighting samples by return/advantage). Value supervision is currently a
+geometric proxy target (`log(1 + distance-to-goal)`); guidance is driven by that learned value
+signal and inpainting constraints.
+
+**Paper**: [Janner et al. (2022). "Planning with Diffusion for Flexible Behavior Synthesis"](https://github.com/jannerm/diffuser)
+
+**Install diffuser dependencies:**
 ```bash
 uv sync --extra dev --extra diffuser
-uv run python examples/diffusion_trajectory_one_shot_example.py --run-config config/diffusion_trajectory_one_shot.yaml
 ```
 
-Headless mode (for CI/scripts):
+**Full workflow:**
+
+**Step 1 – Generate a trajectory dataset** using RRT
+(`--dataset-size` is the number of planning *attempts*; successful trajectories may be fewer —
+use 1000+ for a usable model, 200 is a quick smoke-test):
 ```bash
-uv run python examples/diffusion_trajectory_one_shot_example.py --run-config config/diffusion_trajectory_one_shot.yaml --headless
+uv run python scripts/generate_rrt_dataset.py \
+  --output diffusion_demo_dataset_h16.npz \
+  --horizon 16 --dataset-size 1000
 ```
 
-- 8.2) RRT + DiffusionGuidedSampler integration (legacy workflow, kept for comparison)
+**Step 2 – Train the diffusion and value models** (settings in `config/diffusion_3d_training.yaml`):
 ```bash
-uv run python examples/rrt_diffuser_3d_example.py --run-config config/rrt_diffuser_3d_example.yaml
+uv run python scripts/diffusion_train.py --config config/diffusion_3d_training.yaml
 ```
 
-Example smoke check:
+- 8.1) Diffusion policy one-shot trajectory generation
+
+**Step 3 – Run guided sampling** (loads best checkpoints from `logs/diffusion_logs_h16/`):
 ```bash
-uv run pytest tests/test_diffusion_trajectory_one_shot_example.py -v
+uv run python examples/diffusion_trajectory_one_shot_example.py \
+  --run-config config/diffusion_trajectory_one_shot.yaml
 ```
 
-`dataset`, `seed`, `loadbase`, `diffusion_epoch`, `value_epoch` 등은 `config/*.yaml`로 통일 관리합니다.
+> Dataset paths, checkpoint locations, and sampling parameters are configured in
+> `config/diffusion_3d_training.yaml` (training) and `config/diffusion_trajectory_one_shot.yaml` (inference).
 
 ---
 
