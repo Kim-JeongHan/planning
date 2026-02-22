@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 
 import numpy as np
@@ -26,6 +27,7 @@ class DiffusionConfig(BaseModel):
     """Diffusion model loading and sampling configuration."""
 
     seed: int = 42
+    device: str = "cpu"
     loadbase: str = "logs/pretrained"
     dataset: str
     config: str | None = None
@@ -78,7 +80,6 @@ class RolloutConfig(BaseModel):
 
     segment_resolution: float = 0.1
     endpoint_tolerance: float = 0.75
-    max_sampling_attempts: int = 12
 
 
 class DiffusionOneShotConfig(BaseModel):
@@ -138,7 +139,6 @@ def _register_save_image_hook(server: viser.ViserServer) -> None:
     @server.on_client_connect
     def handle_save(client: viser.ClientHandle) -> None:
         print("Saving image...")
-        import time
 
         time.sleep(2)
         save_docs_image(client, DEFAULT_DOCS_IMAGE)
@@ -203,6 +203,8 @@ def main(
     diffusion_experiment = diffusion_loader.load(diffusion_config.diffusion_epoch)
     value_experiment = value_loader.load(diffusion_config.value_epoch)
     check_compatibility(diffusion_experiment, value_experiment)
+    diffusion_experiment.ema.to(diffusion_config.device)
+    value_experiment.ema.to(diffusion_config.device)
     guide = ValueGuide(model=value_experiment.ema, verbose=False)
     policy = GuidedPolicy(
         guide=guide,
@@ -219,23 +221,26 @@ def main(
     # GuidedPolicy normalizes these to model space before denoising.
     conditions = {0: start_state, policy.horizon - 1: goal_state}
 
-    selected_trajectory = None
-    for attempt in range(1, config.rollout.max_sampling_attempts + 1):
-        result = policy(conditions, batch_size=config.diffusion.sample_batch_size, verbose=False)
-        trajectory_candidates = np.asarray(result.observations, dtype=float)
-        selected_trajectory = select_collision_free_trajectory(
-            trajectories=trajectory_candidates,
-            collision_checker=collision_checker,
-            start_state=start_state,
-            goal_state=goal_state,
-            endpoint_tolerance=config.rollout.endpoint_tolerance,
-            segment_resolution=config.rollout.segment_resolution,
-        )
+    print(f"Sampling trajectories with batch size {diffusion_config.sample_batch_size}...")
+    sampling_start_time = time.perf_counter()
+    result = policy(conditions, batch_size=config.diffusion.sample_batch_size, verbose=False)
+    sampling_time = time.perf_counter() - sampling_start_time
+    print(f"Sampling took {sampling_time:.2f} seconds.")
+    print(f"Sampled {len(result.observations)} trajectories, checking constraints...")
 
-        if selected_trajectory is not None:
-            print(f"Selected trajectory found on attempt {attempt}/{config.rollout.max_sampling_attempts}.")
-            break
+    trajectory_candidates = np.asarray(result.observations, dtype=float)
+    selected_trajectory = select_collision_free_trajectory(
+        trajectories=trajectory_candidates,
+        collision_checker=collision_checker,
+        start_state=start_state,
+        goal_state=goal_state,
+        endpoint_tolerance=config.rollout.endpoint_tolerance,
+        segment_resolution=config.rollout.segment_resolution,
+    )
 
+    if selected_trajectory is not None:
+        print("Selected trajectory found.")
+    else:
         start_dist = np.linalg.norm(
             trajectory_candidates[:, 0, :3] - start_state,
             axis=1,
@@ -249,20 +254,13 @@ def main(
              (goal_dist <= config.rollout.endpoint_tolerance)).sum()
         )
         print(
-            f"Attempt {attempt}/{config.rollout.max_sampling_attempts}: "
-            f"no valid path. best start dist={start_dist.min():.3f}, "
+            f"No valid path. best start dist={start_dist.min():.3f}, "
             f"best goal dist={goal_dist.min():.3f}, endpoint candidates={endpoint_ok}/{len(trajectory_candidates)}"
         )
-
-    if selected_trajectory is None:
         print(
-            f"No collision-free trajectory found after {config.rollout.max_sampling_attempts} attempts "
+            f"No collision-free trajectory found "
             f"(batch_size={config.diffusion.sample_batch_size}, tolerance={config.rollout.endpoint_tolerance})."
         )
-        return None
-
-    if selected_trajectory is None:
-        print("No collision-free trajectory found in sampled batch.")
         return None
 
     print(f"Selected trajectory shape: {selected_trajectory.shape}")
@@ -284,8 +282,6 @@ def main(
         print("Press Ctrl+C to exit.")
         try:
             while True:
-                import time
-
                 time.sleep(0.1)
         except KeyboardInterrupt:
             print("Shutting down server.")

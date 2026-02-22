@@ -251,12 +251,19 @@ uv run python scripts/generate_rrt_dataset.py \
   --horizon 16 --dataset-size 1000
 ```
 
-**Step 2 – Train the diffusion and value models** (settings in `config/diffusion_3d_training.yaml`):
+**Step 2 – Train the models** (train each stage independently or together):
+
+Train diffusion model only:
 ```bash
-uv run python scripts/diffusion_train.py --config config/diffusion_3d_training.yaml
+uv run python scripts/train_diffusion.py --config config/diffusion_3d_training.yaml
 ```
 
-- 8.1) Diffusion policy one-shot trajectory generation
+Train value model only (requires a trained diffusion checkpoint):
+```bash
+uv run python scripts/train_value.py --config config/value_3d_training.yaml
+```
+
+Pass `--no-diffusion` or `--no-value` to skip a stage when using any script.
 
 **Step 3 – Run guided sampling** (loads best checkpoints from `logs/diffusion_logs_h16/`):
 ```bash
@@ -264,8 +271,9 @@ uv run python examples/diffusion_trajectory_one_shot_example.py \
   --run-config config/diffusion_trajectory_one_shot.yaml
 ```
 
-> Dataset paths, checkpoint locations, and sampling parameters are configured in
-> `config/diffusion_3d_training.yaml` (training) and `config/diffusion_trajectory_one_shot.yaml` (inference).
+> Training configs: `config/diffusion_3d_training.yaml` (diffusion stage) and
+> `config/value_3d_training.yaml` (value stage). Inference config:
+> `config/diffusion_trajectory_one_shot.yaml`.
 
 ---
 

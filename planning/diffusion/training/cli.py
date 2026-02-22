@@ -80,6 +80,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--seed", type=int, default=None, help="Random seed.")
     parser.add_argument(
+        "--no-diffusion",
+        dest="train_diffusion",
+        action="store_false",
+        default=None,
+        help="Skip diffusion model training.",
+    )
+    parser.add_argument(
         "--no-value",
         dest="train_value",
         action="store_false",
@@ -285,6 +292,7 @@ class TrainArgResolver:
             "discount": TrainArgResolver._cast_or_raise_float(pick("discount", 1.0), "discount"),
             "seed": TrainArgResolver._cast_or_raise_optional_int(pick("seed", None), "seed"),
             "log_every": TrainArgResolver._cast_or_raise_int(pick("log_every", 100), "log-every"),
+            "train_diffusion": pick("train_diffusion", True),
             "train_value": pick("train_value", True),
             "diffusion_max_epochs": TrainArgResolver._cast_or_raise_optional_int(
                 pick("diffusion_max_epochs", None), "diffusion-max-epochs"

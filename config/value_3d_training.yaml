@@ -11,7 +11,8 @@ learning_rate: 0.001
 discount: 1.0
 seed: 42
 log_every: 100
-train_value: false
+train_diffusion: false
+train_value: true
 tensorboard_log_dir: logs/diffusion_logs_h16/tensorboard
 checkpoint_every: 20
 keep_last_checkpoints: 5

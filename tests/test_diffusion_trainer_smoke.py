@@ -120,13 +120,13 @@ def test_training_pipeline_uses_cpu_tensor_factory(
 
     stage_calls = {"count": 0}
 
-    def fake_run_diffusion_stage(self: object, **kwargs: object) -> list[Path]:
-        del self, kwargs
+    def fake_run_stage(self: object, *, phase: str, **kwargs: object) -> list[Path]:
+        del self, phase, kwargs
         stage_calls["count"] += 1
         return []
 
     monkeypatch.setattr(
-        trainer.DiffusionTrainingPipeline, "_run_diffusion_stage", fake_run_diffusion_stage
+        trainer.DiffusionTrainingPipeline, "_run_stage", fake_run_stage
     )
 
     trainer.DiffusionTrainingPipeline(
@@ -350,7 +350,6 @@ def test_diffusion_epoch_trainer_avoids_loss_item_calls_per_batch(
         model=model,
         optimizer=torch.optim.SGD(model.parameters(), lr=1e-3),
         schedule=DiffusionSchedule.linear(n_diffusion_steps=8),
-        torch_backend=torch,
     )
 
     train_loss = trainer.train_epoch(loader)

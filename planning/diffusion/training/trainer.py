@@ -7,7 +7,6 @@ from pathlib import Path
 
 import numpy as np
 import torch  # type: ignore
-import torch.nn.functional as functional  # type: ignore
 from tqdm import tqdm
 
 from ..config import DiffusionTrainingPipelineConfig
@@ -19,204 +18,9 @@ from .checkpoint import (
 )
 from .config import DiffusionTrainingConfig
 from .dataset import TorchTensorFactory, TrajectoryDataSetSource, TrajectoryLoadConfig
+from .diffusion_trainer import DiffusionEpochTrainer, EMAAccumulator
 from .noise import DiffusionSchedule
-
-
-class EMAAccumulator:
-    """Exponential moving average of model parameters (used for inference).
-
-    After each optimizer step, call ``update()`` to blend the current model
-    weights into the shadow copy.  The shadow weights are saved as
-    ``ema_state_dict`` in every checkpoint.
-
-    ``decay`` of 0.995 follows the default in the Janner et al. diffuser repo.
-    """
-
-    def __init__(self, model: object, decay: float = 0.995) -> None:
-        self.model = model
-        self.decay = float(decay)
-        # Clone current parameters into shadow.
-        self.shadow: dict[str, torch.Tensor] = {
-            name: param.data.clone()
-            for name, param in model.named_parameters()  # type: ignore[union-attr]
-        }
-
-    def update(self) -> None:
-        """Blend current model weights into the EMA shadow copy."""
-        with torch.no_grad():
-            for name, param in self.model.named_parameters():  # type: ignore[union-attr]
-                self.shadow[name].mul_(self.decay).add_(param.data, alpha=1.0 - self.decay)
-
-    def state_dict(self) -> dict[str, object]:
-        """Return the EMA shadow weights (used for ``ema_state_dict`` in checkpoints)."""
-        state = {
-            name: tensor.clone()
-            for name, tensor in self.model.state_dict().items()  # type: ignore[union-attr]
-        }
-        for name, tensor in self.shadow.items():
-            state[name] = tensor.clone()
-        return state
-
-
-class DiffusionEpochTrainer:
-    """Encapsulate one epoch of diffusion-model optimization.
-
-    Trains on the ε-prediction objective (MSE between predicted and actual noise)
-    as specified in Janner et al. 2022.  The diffusion model receives only the
-    noisy trajectory and timestep — no condition vector.  Goal conditioning is
-    handled at inference time via inpainting.
-    """
-
-    def __init__(
-        self,
-        model: object,
-        optimizer: object,
-        schedule: DiffusionSchedule,
-        ema: EMAAccumulator | None = None,
-    ) -> None:
-        self.model = model
-        self.optimizer = optimizer
-        self.schedule = schedule
-        self.ema = ema
-        self._alpha_bar = torch.as_tensor(schedule.alpha_bar, dtype=torch.float32)
-        self._model_device = next(model.parameters()).device  # type: ignore[union-attr]
-
-    def train_epoch(self, loader: object) -> float:
-        total_loss: torch.Tensor | None = None
-        count = 0
-        for observations, _condition in loader:
-            observations = observations.to(self._model_device, non_blocking=True)
-            noise = torch.randn_like(observations)
-            t = torch.randint(
-                0,
-                self.schedule.n_diffusion_steps,
-                (observations.shape[0],),
-                device=observations.device,
-            )
-            alpha_bar = self._alpha_bar.to(
-                device=observations.device, dtype=observations.dtype
-            )[t]
-            alpha_bar = alpha_bar.view(-1, *([1] * (observations.ndim - 1)))
-            noisy = torch.sqrt(alpha_bar) * observations + torch.sqrt(
-                1.0 - alpha_bar
-            ) * noise
-            eps_pred = self.model(noisy, t)
-            loss = functional.mse_loss(eps_pred, noise)
-            self.optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            self.optimizer.step()
-            if self.ema is not None:
-                self.ema.update()
-            detached_loss = loss.detach()
-            total_loss = detached_loss if total_loss is None else total_loss + detached_loss
-            count += 1
-        if count == 0 or total_loss is None:
-            return 0.0
-        return float((total_loss / count).item())
-
-    def evaluate_epoch(self, loader: object) -> float:
-        self.model.eval()
-        total_loss: torch.Tensor | None = None
-        count = 0
-        with torch.no_grad():
-            for observations, _condition in loader:
-                observations = observations.to(self._model_device, non_blocking=True)
-                noise = torch.randn_like(observations)
-                t = torch.randint(
-                    0,
-                    self.schedule.n_diffusion_steps,
-                    (observations.shape[0],),
-                    device=observations.device,
-                )
-                alpha_bar = self._alpha_bar.to(
-                    device=observations.device, dtype=observations.dtype
-                )[t]
-                alpha_bar = alpha_bar.view(-1, *([1] * (observations.ndim - 1)))
-                noisy = torch.sqrt(alpha_bar) * observations + torch.sqrt(
-                    1.0 - alpha_bar
-                ) * noise
-                eps_pred = self.model(noisy, t)
-                loss = functional.mse_loss(eps_pred, noise)
-                detached_loss = loss.detach()
-                total_loss = detached_loss if total_loss is None else total_loss + detached_loss
-                count += 1
-        self.model.train()
-        if count == 0 or total_loss is None:
-            return 0.0
-        return float((total_loss / count).item())
-
-
-class ValueEpochTrainer:
-    """Encapsulate one epoch of value-model optimization.
-
-    The value model J_φ predicts a proxy for trajectory quality: the mean
-    log(1 + distance) from each state to the trajectory's final state.  No
-    condition vector is passed to the model; goal conditioning is implicit
-    because the trajectory's final state IS the goal in the training data.
-    """
-
-    def __init__(
-        self,
-        model: object,
-        optimizer: object,
-        normalizer: object,
-        ema: EMAAccumulator | None = None,
-    ) -> None:
-        self.model = model
-        self.optimizer = optimizer
-        self.normalizer = normalizer
-        self.ema = ema
-        self._model_device = next(model.parameters()).device  # type: ignore[union-attr]
-
-    def _compute_target(self, observations: object) -> object:
-        """Compute distance-to-goal target from the trajectory's final state."""
-        goal = observations[:, -1, :]  # [B, D]
-        distances = torch.norm(observations - goal[:, None, :], dim=-1)  # [B, H]
-        return torch.log1p(distances.mean(dim=1, keepdim=True))  # [B, 1]
-
-    def train_epoch(self, loader: object) -> float:
-        total_loss: torch.Tensor | None = None
-        count = 0
-        for observations, _condition in loader:
-            observations = observations.to(self._model_device, non_blocking=True)
-            if observations.shape[1] < 1:
-                continue
-            target = self._compute_target(observations)
-            pred = self.model(observations)
-            target = target.to(dtype=pred.dtype, device=pred.device)
-            loss = functional.mse_loss(pred, target)
-            self.optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            self.optimizer.step()
-            if self.ema is not None:
-                self.ema.update()
-            detached_loss = loss.detach()
-            total_loss = detached_loss if total_loss is None else total_loss + detached_loss
-            count += 1
-        if count == 0 or total_loss is None:
-            return 0.0
-        return float((total_loss / count).item())
-
-    def evaluate_epoch(self, loader: object) -> float:
-        self.model.eval()
-        total_loss: torch.Tensor | None = None
-        count = 0
-        with torch.no_grad():
-            for observations, _condition in loader:
-                observations = observations.to(self._model_device, non_blocking=True)
-                if observations.shape[1] < 1:
-                    continue
-                target = self._compute_target(observations)
-                pred = self.model(observations)
-                target = target.to(dtype=pred.dtype, device=pred.device)
-                loss = functional.mse_loss(pred, target)
-                detached_loss = loss.detach()
-                total_loss = detached_loss if total_loss is None else total_loss + detached_loss
-                count += 1
-        self.model.train()
-        if count == 0 or total_loss is None:
-            return 0.0
-        return float((total_loss / count).item())
+from .value_trainer import ValueEpochTrainer
 
 
 def _log_every(epochs: int, target_ticks: int = 20) -> int:
@@ -291,15 +95,7 @@ class DiffusionTrainingPipeline:
     def __init__(self, **values: object) -> None:
         self.cfg = DiffusionTrainingPipelineConfig(**values)
 
-    def run(self) -> list[Path]:
-        """Run the full training pipeline."""
-        return self.execute()
-
-    def execute(self) -> list[Path]:
-        """Execute training and return saved checkpoint paths."""
-        return self._run_impl()
-
-    def _run_impl(self) -> list[Path]:  # noqa: C901
+    def run(self) -> list[Path]:  # noqa: C901
         cfg = self.cfg
 
         if cfg.seed is not None:
@@ -390,24 +186,7 @@ class DiffusionTrainingPipeline:
             f"{schedule_name} (lr={config.learning_rate}, step_size={config.lr_step_size}, "
             f"gamma={config.lr_gamma}, lr_min={config.lr_min})"
         )
-        diffusion_model = DiffusionModel(
-            state_dim=config.state_dim,
-            horizon=config.horizon,
-            n_diffusion_steps=config.n_diffusion_steps,
-            dim=config.n_hidden,
-        ).to(training_device)
-        # Cosine noise schedule (Nichol & Dhariwal 2021) as used in the paper.
-        schedule = DiffusionSchedule.cosine(n_diffusion_steps=config.n_diffusion_steps)
-        diffusion_optimizer = torch.optim.AdamW(
-            diffusion_model.parameters(), lr=config.learning_rate
-        )
-        diffusion_ema = EMAAccumulator(diffusion_model)
-        diffusion_epoch_trainer = DiffusionEpochTrainer(
-            model=diffusion_model,
-            optimizer=diffusion_optimizer,
-            schedule=schedule,
-            ema=diffusion_ema,
-        )
+
         checkpoint_config = CheckpointConfig(
             dataset=dataset_key,
             horizon=config.horizon,
@@ -426,17 +205,6 @@ class DiffusionTrainingPipeline:
             patience=config.value_patience, min_delta=config.value_min_delta, name="value"
         )
 
-        effective_diffusion_epochs = config.epochs
-        if config.diffusion_max_epochs is not None:
-            effective_diffusion_epochs = min(
-                effective_diffusion_epochs, config.diffusion_max_epochs
-            )
-        if effective_diffusion_epochs <= 0:
-            raise ValueError("diffusion_max_epochs / epochs must be at least 1.")
-        diffuse_log_every = _coerce_log_every(
-            effective_diffusion_epochs, cfg.log_every
-        )
-
         if summary_writer is not None:
             summary_writer.add_text(
                 "training/config",
@@ -448,7 +216,7 @@ class DiffusionTrainingPipeline:
                     f"batch_size={config.batch_size}\n"
                     f"learning_rate={config.learning_rate}\n"
                     f"lr_schedule={config.lr_schedule}\n"
-                    f"epochs={effective_diffusion_epochs}\n"
+                    f"epochs={config.epochs}\n"
                     f"seed={cfg.seed}\n"
                     f"checkpoint_every={checkpoint_every}\n"
                     f"keep_last_checkpoints={keep_last_checkpoints}\n"
@@ -456,179 +224,196 @@ class DiffusionTrainingPipeline:
                 0,
             )
 
-        diffusion_ckpts = self._run_diffusion_stage(
-            config=config,
-            dataset_key=dataset_key,
-            normalizer=normalizer,
-            checkpoint_writer=checkpoint_writer,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            diffusion_model=diffusion_model,
-            diffusion_optimizer=diffusion_optimizer,
-            diffusion_epoch_trainer=diffusion_epoch_trainer,
-            diffusion_ema=diffusion_ema,
-            summary_writer=summary_writer,
-            diffusion_patience=diffusion_patience,
-            diffusion_min_delta=diffusion_min_delta,
-            effective_diffusion_epochs=effective_diffusion_epochs,
-            diffuse_log_every=diffuse_log_every,
-            checkpoint_every=checkpoint_every,
-            latest_checkpoint_every=latest_checkpoint_every,
-            keep_last_checkpoints=keep_last_checkpoints,
-        )
+        all_ckpts: list[Path] = []
 
-        if not config.train_value:
-            if summary_writer is not None:
-                summary_writer.close()
-            return [path for path in diffusion_ckpts if path.exists()]
+        if cfg.train_diffusion:
+            effective_diffusion_epochs = config.epochs
+            if config.diffusion_max_epochs is not None:
+                effective_diffusion_epochs = min(
+                    effective_diffusion_epochs, config.diffusion_max_epochs
+                )
+            if effective_diffusion_epochs <= 0:
+                raise ValueError("diffusion_max_epochs / epochs must be at least 1.")
+            diffusion_model = DiffusionModel(
+                state_dim=config.state_dim,
+                horizon=config.horizon,
+                n_diffusion_steps=config.n_diffusion_steps,
+                dim=config.n_hidden,
+            ).to(training_device)
+            # Cosine noise schedule (Nichol & Dhariwal 2021) as used in the paper.
+            schedule = DiffusionSchedule.cosine(n_diffusion_steps=config.n_diffusion_steps)
+            diffusion_optimizer = torch.optim.AdamW(
+                diffusion_model.parameters(), lr=config.learning_rate
+            )
+            diffusion_ema = EMAAccumulator(diffusion_model)
+            diffusion_epoch_trainer = DiffusionEpochTrainer(
+                model=diffusion_model,
+                optimizer=diffusion_optimizer,
+                schedule=schedule,
+                ema=diffusion_ema,
+            )
+            diffuse_log_every = _coerce_log_every(effective_diffusion_epochs, cfg.log_every)
+            diffusion_ckpts = self._run_stage(
+                phase="diffusion",
+                epoch_trainer=diffusion_epoch_trainer,
+                model=diffusion_model,
+                optimizer=diffusion_optimizer,
+                ema=diffusion_ema,
+                effective_epochs=effective_diffusion_epochs,
+                patience=diffusion_patience,
+                min_delta=diffusion_min_delta,
+                log_every=diffuse_log_every,
+                config=config,
+                dataset_key=dataset_key,
+                normalizer=normalizer,
+                checkpoint_writer=checkpoint_writer,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                summary_writer=summary_writer,
+                checkpoint_every=checkpoint_every,
+                latest_checkpoint_every=latest_checkpoint_every,
+                keep_last_checkpoints=keep_last_checkpoints,
+            )
+            all_ckpts.extend(diffusion_ckpts)
 
-        value_model = ValueModel(
-            state_dim=config.state_dim,
-            horizon=config.horizon,
-            dim=config.n_hidden,
-        ).to(training_device)
-        value_optimizer = torch.optim.AdamW(value_model.parameters(), lr=config.learning_rate)
-        value_ema = EMAAccumulator(value_model)
-        value_epoch_trainer = ValueEpochTrainer(
-            model=value_model,
-            optimizer=value_optimizer,
-            normalizer=normalizer,
-            ema=value_ema,
-        )
-
-        effective_value_epochs = config.epochs if config.train_value else 0
-        if config.value_max_epochs is not None and config.value_max_epochs < 0:
-            raise ValueError("value_max_epochs must be >= 0.")
-        if config.value_max_epochs is not None:
-            effective_value_epochs = min(effective_value_epochs, config.value_max_epochs)
-        if effective_value_epochs < 1:
-            if summary_writer is not None:
-                summary_writer.close()
-            return [path for path in diffusion_ckpts if path.exists()]
-
-        value_log_every = _coerce_log_every(effective_value_epochs, cfg.log_every)
-        value_ckpts = self._run_value_stage(
-            config=config,
-            dataset_key=dataset_key,
-            normalizer=normalizer,
-            checkpoint_writer=checkpoint_writer,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            value_model=value_model,
-            value_optimizer=value_optimizer,
-            value_epoch_trainer=value_epoch_trainer,
-            value_ema=value_ema,
-            summary_writer=summary_writer,
-            value_patience=value_patience,
-            value_min_delta=value_min_delta,
-            effective_value_epochs=effective_value_epochs,
-            value_log_every=value_log_every,
-            checkpoint_every=checkpoint_every,
-            latest_checkpoint_every=latest_checkpoint_every,
-            keep_last_checkpoints=keep_last_checkpoints,
-        )
+        if cfg.train_value:
+            effective_value_epochs = config.epochs
+            if config.value_max_epochs is not None and config.value_max_epochs < 0:
+                raise ValueError("value_max_epochs must be >= 0.")
+            if config.value_max_epochs is not None:
+                effective_value_epochs = min(effective_value_epochs, config.value_max_epochs)
+            if effective_value_epochs >= 1:
+                value_model = ValueModel(
+                    state_dim=config.state_dim,
+                    horizon=config.horizon,
+                    dim=config.n_hidden,
+                ).to(training_device)
+                value_optimizer = torch.optim.AdamW(
+                    value_model.parameters(), lr=config.learning_rate
+                )
+                value_ema = EMAAccumulator(value_model)
+                value_epoch_trainer = ValueEpochTrainer(
+                    model=value_model,
+                    optimizer=value_optimizer,
+                    normalizer=normalizer,
+                    ema=value_ema,
+                )
+                value_log_every = _coerce_log_every(effective_value_epochs, cfg.log_every)
+                value_ckpts = self._run_stage(
+                    phase="value",
+                    epoch_trainer=value_epoch_trainer,
+                    model=value_model,
+                    optimizer=value_optimizer,
+                    ema=value_ema,
+                    effective_epochs=effective_value_epochs,
+                    patience=value_patience,
+                    min_delta=value_min_delta,
+                    log_every=value_log_every,
+                    config=config,
+                    dataset_key=dataset_key,
+                    normalizer=normalizer,
+                    checkpoint_writer=checkpoint_writer,
+                    train_loader=train_loader,
+                    val_loader=val_loader,
+                    summary_writer=summary_writer,
+                    checkpoint_every=checkpoint_every,
+                    latest_checkpoint_every=latest_checkpoint_every,
+                    keep_last_checkpoints=keep_last_checkpoints,
+                    extra_meta={"discount": config.discount},
+                )
+                all_ckpts.extend(value_ckpts)
 
         if summary_writer is not None:
             summary_writer.close()
-        return [path for path in (diffusion_ckpts + value_ckpts) if path.exists()]
+        return [path for path in all_ckpts if path.exists()]
 
-    def _run_diffusion_stage(
+    def _run_stage(
         self,
         *,
+        phase: str,
+        epoch_trainer: object,
+        model: object,
+        optimizer: object,
+        ema: EMAAccumulator,
+        effective_epochs: int,
+        patience: int | None,
+        min_delta: float,
+        log_every: int,
         config: DiffusionTrainingConfig,
         dataset_key: str,
         normalizer: object,
         checkpoint_writer: CheckpointWriter,
         train_loader: object,
         val_loader: object | None,
-        diffusion_model: object,
-        diffusion_optimizer: object,
-        diffusion_epoch_trainer: DiffusionEpochTrainer,
-        diffusion_ema: EMAAccumulator,
         summary_writer: object | None,
-        diffusion_patience: int | None,
-        diffusion_min_delta: float,
-        effective_diffusion_epochs: int,
-        diffuse_log_every: int,
         checkpoint_every: int,
         latest_checkpoint_every: int,
         keep_last_checkpoints: int,
+        extra_meta: dict[str, object] | None = None,
     ) -> list[Path]:
-        diffusion_ckpts: list[Path] = []
-        diffusion_tracker = EpochLossTracker(
-            min_delta=diffusion_min_delta, patience=diffusion_patience
-        )
-        diffusion_recent_ckpts: list[Path] = []
-
-        diffusion_bar = tqdm(
-            range(1, effective_diffusion_epochs + 1),
-            desc="Diffusion training",
+        ckpts: list[Path] = []
+        tracker = EpochLossTracker(min_delta=min_delta, patience=patience)
+        recent_ckpts: list[Path] = []
+        bar = tqdm(
+            range(1, effective_epochs + 1),
+            desc=f"{phase.title()} training",
             unit="epoch",
         )
-        diffusion_latest_ckpt = checkpoint_writer.path_manager.latest("diffusion")
-        diffusion_best_ckpt = checkpoint_writer.path_manager.best("diffusion")
-        for epoch in diffusion_bar:
+        latest_ckpt = checkpoint_writer.path_manager.latest(phase)
+        best_ckpt = checkpoint_writer.path_manager.best(phase)
+        for epoch in bar:
             current_lr = _learning_rate_for_epoch(
                 config.learning_rate,
                 config.lr_schedule,
                 epoch,
-                total_epochs=effective_diffusion_epochs,
+                total_epochs=effective_epochs,
                 step_size=config.lr_step_size,
                 gamma=config.lr_gamma,
                 lr_min=config.lr_min,
             )
-            _set_learning_rate(diffusion_optimizer, current_lr)
+            _set_learning_rate(optimizer, current_lr)
             train_loss, val_loss, metric_loss = _run_epoch_with_validation(
-                diffusion_epoch_trainer, train_loader, val_loader
+                epoch_trainer, train_loader, val_loader
             )
-            is_new_best, delta = diffusion_tracker.update(metric_loss, epoch)
+            is_new_best, delta = tracker.update(metric_loss, epoch)
             best_tag = " [new best]" if is_new_best else ""
-            diffusion_bar.set_postfix(
+            bar.set_postfix(
                 {
                     "train_loss": f"{train_loss:.4f}",
                     "val_loss": "n/a" if val_loss is None else f"{val_loss:.4f}",
-                    "best": f"{diffusion_tracker.best_loss:.4f}",
+                    "best": f"{tracker.best_loss:.4f}",
                     "delta": delta,
                     "lr": _format_lr(current_lr),
                 }
             )
-            if (
-                epoch % diffuse_log_every == 0
-                or epoch == 1
-                or epoch == effective_diffusion_epochs
-            ):
+            if epoch % log_every == 0 or epoch == 1 or epoch == effective_epochs:
                 best_label = (
                     ""
-                    if diffusion_tracker.best_loss is None
+                    if tracker.best_loss is None
                     else (
-                        f" best={diffusion_tracker.best_loss:.6f} "
-                        f"(epoch={diffusion_tracker.best_epoch})"
+                        f" best={tracker.best_loss:.6f} "
+                        f"(epoch={tracker.best_epoch})"
                     )
                 )
                 print(
-                    f"[diffusion] epoch {epoch}/{effective_diffusion_epochs} "
+                    f"[{phase}] epoch {epoch}/{effective_epochs} "
                     f"train_loss={train_loss:.6f} "
                     f"val_loss={'n/a' if val_loss is None else f'{val_loss:.6f}'} "
                     f"lr={current_lr:.6f} "
                     f"delta={delta}{best_label}{best_tag}"
                 )
-            _log_scalar(summary_writer, "diffusion/loss", train_loss, epoch)
+            _log_scalar(summary_writer, f"{phase}/loss", train_loss, epoch)
             if val_loss is not None:
-                _log_scalar(summary_writer, "diffusion/val_loss", val_loss, epoch)
-            _log_scalar(summary_writer, "diffusion/lr", current_lr, epoch)
-            if diffusion_tracker.best_loss is not None:
-                _log_scalar(
-                    summary_writer,
-                    "diffusion/best_loss",
-                    diffusion_tracker.best_loss,
-                    epoch,
-                )
+                _log_scalar(summary_writer, f"{phase}/val_loss", val_loss, epoch)
+            _log_scalar(summary_writer, f"{phase}/lr", current_lr, epoch)
+            if tracker.best_loss is not None:
+                _log_scalar(summary_writer, f"{phase}/best_loss", tracker.best_loss, epoch)
             _manage_stage_checkpoints(
-                phase="diffusion",
+                phase=phase,
                 epoch=epoch,
-                total_epochs=effective_diffusion_epochs,
-                model=diffusion_model,
-                ema=diffusion_ema,
+                total_epochs=effective_epochs,
+                model=model,
+                ema=ema,
                 normalizer=normalizer,
                 checkpoint_writer=checkpoint_writer,
                 config=config,
@@ -636,146 +421,30 @@ class DiffusionTrainingPipeline:
                 metric_loss=metric_loss,
                 train_loss=train_loss,
                 is_new_best=is_new_best,
-                recent_ckpts=diffusion_recent_ckpts,
-                ckpt_paths=diffusion_ckpts,
-                latest_ckpt=diffusion_latest_ckpt,
-                best_ckpt=diffusion_best_ckpt,
+                recent_ckpts=recent_ckpts,
+                ckpt_paths=ckpts,
+                latest_ckpt=latest_ckpt,
+                best_ckpt=best_ckpt,
                 checkpoint_every=checkpoint_every,
                 latest_checkpoint_every=latest_checkpoint_every,
                 keep_last_checkpoints=keep_last_checkpoints,
+                extra_meta=extra_meta,
             )
 
-            if diffusion_tracker.should_stop():
+            if tracker.should_stop():
                 print(
-                    f"[early-stop][diffusion] Stopping at epoch {epoch}/{effective_diffusion_epochs} "
-                    f"due to no improvement for {diffusion_tracker.no_improve} epochs."
+                    f"[early-stop][{phase}] Stopping at epoch {epoch}/{effective_epochs} "
+                    f"due to no improvement for {tracker.no_improve} epochs."
                 )
                 break
 
         print(
-            "[summary][diffusion] best epoch="
-            f"{'n/a' if diffusion_tracker.best_epoch is None else diffusion_tracker.best_epoch}, "
-            f"best loss={diffusion_tracker.best_loss:.6f}"
+            f"[summary][{phase}] best epoch="
+            f"{'n/a' if tracker.best_epoch is None else tracker.best_epoch}, "
+            f"best loss={tracker.best_loss:.6f}"
         )
-        diffusion_bar.close()
-        return [path for path in diffusion_ckpts if path.exists()]
-
-    def _run_value_stage(
-        self,
-        *,
-        config: DiffusionTrainingConfig,
-        dataset_key: str,
-        normalizer: object,
-        checkpoint_writer: CheckpointWriter,
-        train_loader: object,
-        val_loader: object | None,
-        value_model: object,
-        value_optimizer: object,
-        value_epoch_trainer: ValueEpochTrainer,
-        value_ema: EMAAccumulator,
-        summary_writer: object | None,
-        value_patience: int | None,
-        value_min_delta: float,
-        effective_value_epochs: int,
-        value_log_every: int,
-        checkpoint_every: int,
-        latest_checkpoint_every: int,
-        keep_last_checkpoints: int,
-    ) -> list[Path]:
-        value_ckpts: list[Path] = []
-        value_tracker = EpochLossTracker(min_delta=value_min_delta, patience=value_patience)
-        value_recent_ckpts: list[Path] = []
-        value_bar = tqdm(
-            range(1, effective_value_epochs + 1),
-            desc="Value training",
-            unit="epoch",
-        )
-        value_latest_ckpt = checkpoint_writer.path_manager.latest("value")
-        value_best_ckpt = checkpoint_writer.path_manager.best("value")
-        for epoch in value_bar:
-            current_lr = _learning_rate_for_epoch(
-                config.learning_rate,
-                config.lr_schedule,
-                epoch,
-                total_epochs=effective_value_epochs,
-                step_size=config.lr_step_size,
-                gamma=config.lr_gamma,
-                lr_min=config.lr_min,
-            )
-            _set_learning_rate(value_optimizer, current_lr)
-            value_train_loss, value_val_loss, value_metric_loss = _run_epoch_with_validation(
-                value_epoch_trainer, train_loader, val_loader
-            )
-            is_new_best, delta = value_tracker.update(value_metric_loss, epoch)
-            best_tag = " [new best]" if is_new_best else ""
-            value_bar.set_postfix(
-                {
-                    "train_loss": f"{value_train_loss:.4f}",
-                    "val_loss": "n/a" if value_val_loss is None else f"{value_val_loss:.4f}",
-                    "best": f"{value_tracker.best_loss:.4f}",
-                    "delta": delta,
-                    "lr": _format_lr(current_lr),
-                }
-            )
-            if epoch % value_log_every == 0 or epoch == 1 or epoch == effective_value_epochs:
-                best_label = (
-                    ""
-                    if value_tracker.best_loss is None
-                    else (
-                        f" best={value_tracker.best_loss:.6f} "
-                        f"(epoch={value_tracker.best_epoch})"
-                    )
-                )
-                print(
-                    f"[value] epoch {epoch}/{effective_value_epochs} "
-                    f"train_loss={value_train_loss:.6f} "
-                    f"val_loss={'n/a' if value_val_loss is None else f'{value_val_loss:.6f}'} "
-                    f"lr={current_lr:.6f} "
-                    f"delta={delta}{best_label}{best_tag}"
-                )
-            _log_scalar(summary_writer, "value/loss", value_train_loss, epoch)
-            if value_val_loss is not None:
-                _log_scalar(summary_writer, "value/val_loss", value_val_loss, epoch)
-            _log_scalar(summary_writer, "value/lr", current_lr, epoch)
-            if value_tracker.best_loss is not None:
-                _log_scalar(summary_writer, "value/best_loss", value_tracker.best_loss, epoch)
-            _manage_stage_checkpoints(
-                phase="value",
-                epoch=epoch,
-                total_epochs=effective_value_epochs,
-                model=value_model,
-                ema=value_ema,
-                normalizer=normalizer,
-                checkpoint_writer=checkpoint_writer,
-                config=config,
-                dataset_key=dataset_key,
-                metric_loss=value_metric_loss,
-                train_loss=value_train_loss,
-                is_new_best=is_new_best,
-                recent_ckpts=value_recent_ckpts,
-                ckpt_paths=value_ckpts,
-                latest_ckpt=value_latest_ckpt,
-                best_ckpt=value_best_ckpt,
-                checkpoint_every=checkpoint_every,
-                latest_checkpoint_every=latest_checkpoint_every,
-                keep_last_checkpoints=keep_last_checkpoints,
-                extra_meta={"discount": config.discount},
-            )
-
-            if value_tracker.should_stop():
-                print(
-                    f"[early-stop][value] Stopping at epoch {epoch}/{effective_value_epochs} "
-                    f"due to no improvement for {value_tracker.no_improve} epochs."
-                )
-                break
-
-        print(
-            "[summary][value] best epoch="
-            f"{'n/a' if value_tracker.best_epoch is None else value_tracker.best_epoch}, "
-            f"best loss={value_tracker.best_loss:.6f}"
-        )
-        value_bar.close()
-        return [path for path in value_ckpts if path.exists()]
+        bar.close()
+        return [path for path in ckpts if path.exists()]
 
 
 def _coerce_lr_schedule(

@@ -21,6 +21,27 @@ import torch
 from .core import PlannerStateNormalizer
 from .training.noise import DiffusionSchedule
 
+
+def _resolve_model_device(model: object | None) -> torch.device:
+    """Resolve the compute device for a model-like object."""
+    if model is None:
+        return torch.device("cpu")
+
+    candidates: list[object] = [model]
+    for attr in ("module", "ema", "model"):
+        nested = getattr(model, attr, None)
+        if nested is not None:
+            candidates.append(nested)
+
+    for candidate in candidates:
+        if isinstance(candidate, torch.nn.Module):
+            try:
+                return next(candidate.parameters()).device
+            except StopIteration:
+                continue
+    return torch.device("cpu")
+
+
 # ---------------------------------------------------------------------------
 # Condition helpers
 # ---------------------------------------------------------------------------
@@ -104,6 +125,7 @@ class ModelPredictor:
 
     def __init__(self, *, model: object | None = None) -> None:
         self.model = model
+        self.device = _resolve_model_device(model)
 
     def predict(
         self,
@@ -120,8 +142,8 @@ class ModelPredictor:
 
         if hasattr(self.model, "forward"):
             with torch.no_grad():
-                x_t = torch.as_tensor(x, dtype=torch.float32)
-                t_t = torch.as_tensor(t, dtype=torch.long)
+                x_t = torch.as_tensor(x, dtype=torch.float32, device=self.device)
+                t_t = torch.as_tensor(t, dtype=torch.long, device=self.device)
                 eps = self.model(x_t, t_t)
                 return np.asarray(eps.detach().cpu().numpy(), dtype=float)
 
@@ -149,6 +171,7 @@ class GuidancePolicy:
         self.model = model
         self.verbose = verbose
         self._fallback_scale = float(fallback_scale)
+        self._device = _resolve_model_device(model)
 
     def __call__(
         self,
@@ -182,7 +205,9 @@ class GuidancePolicy:
             return None
         if x.ndim != 3:
             return None
-        x_t = torch.as_tensor(x, dtype=torch.float32).requires_grad_(True)
+        x_t = torch.as_tensor(x, dtype=torch.float32, device=self._device).requires_grad_(
+            True
+        )
         try:
             with torch.enable_grad():
                 value = self.model(x_t)

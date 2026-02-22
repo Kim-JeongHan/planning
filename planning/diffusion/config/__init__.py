@@ -46,6 +46,7 @@ class DiffusionTrainingPipelineConfig(DiffusionBaseConfig):
     lr_step_size: int = 100
     lr_gamma: float = 0.5
     lr_min: float = 1e-5
+    train_diffusion: bool = True
     train_value: bool = True
     log_every: int | None = None
     diffusion_max_epochs: int | None = None
