@@ -226,58 +226,57 @@ uv run python examples/informed_rrt_star_example.py
 
 ### 8. Diffuser (Guided Diffusion Planning)
 
-Trajectory planning by reverse diffusion with value-guided sampling. A diffusion model learns
-the distribution of collision-free trajectories; at planning time a value model steers each
-denoising step toward high-reward trajectories via gradient guidance (Algorithm 1 in the paper).
+Trajectory planning by reverse diffusion with value-guided sampling.  
+A diffusion model learns a trajectory prior from data, and a value model steers each
+denoising step toward high-quality motions during reverse sampling (Algorithm 1).
 
-Note: this codebase does **not** apply an additional reward-correction stage during training
-(for example, reweighting samples by return/advantage). Value supervision is currently a
-geometric proxy target (`log(1 + distance-to-goal)`); guidance is driven by that learned value
-signal and inpainting constraints.
+In practice, the `diffusion_trajectory_one_shot_example.py` script uses endpoint inpainting
+to clamp start and goal states at timestep boundaries and returns full batched trajectories in one call.
 
 <img src="docs/images/diffusion_trajectory_one_shot_example.png" alt="Diffuser One-Shot Example" width="100%" height="100%"/>
 
 **Paper**: [Janner et al. (2022). "Planning with Diffusion for Flexible Behavior Synthesis"](https://github.com/jannerm/diffuser)
 
-**Install diffuser dependencies:**
+**Features:**
+- **Diffusion prior learning**: trains a trajectory distribution model from motion examples
+- **Value guidance**: guides the reverse process with a learned value network during sampling
+- **One-shot generation**: returns full trajectory batches at once with fixed start/goal states
+- **Simple endpoint constraints**: applies inpainting constraints directly in the denoising loop
+- **Separate training stages**: diffusion and value networks can be trained independently
+
+**Install dependencies:**
 ```bash
 uv sync --extra dev --extra diffuser
 ```
 
-**Full workflow:**
+**Full workflow (recommended):**
 
-**Step 1 – Generate a trajectory dataset** using RRT
-(`--dataset-size` is the number of planning *attempts*; successful trajectories may be fewer —
-use 1000+ for a usable model, 200 is a quick smoke-test):
+1. Generate a dataset from RRT rollouts.
+2. Train the diffusion model.
+3. Train the value model.
+4. Run one-shot guided sampling.
+
 ```bash
 uv run python scripts/generate_rrt_dataset.py \
   --output diffusion_demo_dataset_h16.npz \
   --horizon 16 --dataset-size 1000
-```
 
-**Step 2 – Train the models** (train each stage independently or together):
-
-Train diffusion model only:
-```bash
 uv run python scripts/train_diffusion.py --config config/diffusion_3d_training.yaml
-```
-
-Train value model only (requires a trained diffusion checkpoint):
-```bash
 uv run python scripts/train_value.py --config config/value_3d_training.yaml
-```
-
-Pass `--no-diffusion` or `--no-value` to skip a stage when using any script.
-
-**Step 3 – Run guided sampling** (loads best checkpoints from `logs/diffusion_logs_h16/`):
-```bash
 uv run python examples/diffusion_trajectory_one_shot_example.py \
   --run-config config/diffusion_trajectory_one_shot.yaml
 ```
 
-> Training configs: `config/diffusion_3d_training.yaml` (diffusion stage) and
-> `config/value_3d_training.yaml` (value stage). Inference config:
-> `config/diffusion_trajectory_one_shot.yaml`.
+`--dataset-size` is the number of planning attempts. A larger value gives stronger coverage
+(e.g., `1000+` for practical training; `200` can be used for quick smoke tests).
+
+> Training configs:
+> - Diffusion: `config/diffusion_3d_training.yaml`
+> - Value: `config/value_3d_training.yaml`
+> - Inference: `config/diffusion_trajectory_one_shot.yaml`
+
+**Note:** Current value training uses a geometric proxy target (`log(1 + distance-to-goal)`),
+without extra reward-correction reweighting during training.
 
 ---
 
