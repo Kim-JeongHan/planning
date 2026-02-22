@@ -15,6 +15,8 @@ A Python 3D path planning library with visualization using Viser. Implements pat
 - ⚡ **Asymptotic Optimality**: RRT*, Informed RRT*, RRG, and PRM* converge to optimal solutions
 - 🎯 **Informed Sampling**: Informed RRT* uses ellipsoidal heuristic for faster convergence
 - 🗺️ **Multi-Query Planning**: PRM and PRM* build reusable roadmaps for efficient path queries
+- 🎬 **Diffusion-based Planning**: Guided reverse-diffusion sampler with value-based trajectory guidance
+- 🔄 **Trajectory One-shot Inference**: Generate full collision-aware trajectories from start/goal constraints in one call
 
 ## Requirements
 
