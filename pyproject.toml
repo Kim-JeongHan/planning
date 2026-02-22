@@ -24,6 +24,7 @@ dev = [
 diffuser = [
     "torch>=2.2.0",
     "pyyaml>=6.0.2",
+    "tensorboard>=2.16.0",
 ]
 
 [build-system]

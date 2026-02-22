@@ -490,31 +490,12 @@ class ModelPayloadLoader:
         except ModuleNotFoundError:
             return importlib.import_module(_normalize_legacy_module_path(module_path))
 
-    @staticmethod
-    def _normalize_class_name(class_name: str) -> str:
-        for suffix in ("DiffusionModel", "SimpleDiffusionModel", "ValueModel", "SimpleValueModel"):
-            if class_name.endswith(suffix):
-                return suffix
-        return class_name
-
     def _load_model_cls(
         self, payload: dict[str, object], descriptor: _ResolvedModelDescriptor
     ) -> object:
-        normalized_name = self._normalize_class_name(descriptor.class_name)
-        if normalized_name in {"DiffusionModel", "SimpleDiffusionModel"}:
-            from .model import SimpleDiffusionModel
-
-            model_kwargs = payload.get("model_kwargs", {})
-            return SimpleDiffusionModel.create(**model_kwargs)  # type: ignore[misc]
-        if normalized_name in {"ValueModel", "SimpleValueModel"}:
-            from .model import SimpleValueModel
-
-            model_kwargs = payload.get("model_kwargs", {})
-            return SimpleValueModel.create(**model_kwargs)  # type: ignore[misc]
-
         module = self._resolve_module(descriptor.module_path)
         model_kwargs = payload.get("model_kwargs", {})
-        model_cls = getattr(module, normalized_name)
+        model_cls = getattr(module, descriptor.class_name)
         return model_cls(**model_kwargs)  # type: ignore[misc]
 
     @staticmethod

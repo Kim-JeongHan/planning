@@ -74,9 +74,12 @@ class CheckpointWriter:
         normalizer: PlannerStateNormalizer,
         meta: dict[str, object],
         model_kind: str,
+        ema_state_dict: dict[str, object] | None = None,
     ) -> dict[str, object]:
+        hparams = getattr(model, "hparams", {})
+        model_state = model.state_dict()  # type: ignore[union-attr]
         return {
-            "model_class_path": getattr(model, "hparams", {}).get(
+            "model_class_path": hparams.get(
                 "model_class_path", model.__class__.__module__ + "." + model.__class__.__name__
             ),
             "model_kwargs": {
@@ -85,14 +88,14 @@ class CheckpointWriter:
                 "n_diffusion_steps": int(
                     meta.get("n_diffusion_steps", getattr(model, "n_diffusion_steps", 100))
                 ),
-                "n_hidden": int(meta.get("n_hidden", 256)),
-                "n_layers": int(meta.get("n_layers", 2)),
-                "condition_dim": int(meta.get("condition_dim", 0)),
+                "dim": int(hparams.get("dim", getattr(model, "dim", 32))),
+                "dim_mults": list(hparams.get("dim_mults", getattr(model, "dim_mults", [1, 2, 4, 8]))),
             },
             "normalizer": normalizer.to_dict(),
             "meta": dict(meta),
-            "model_state_dict": model.state_dict(),
-            "ema_state_dict": model.state_dict(),
+            "model_state_dict": model_state,
+            # EMA weights are used for inference; fall back to model weights if not provided.
+            "ema_state_dict": ema_state_dict if ema_state_dict is not None else model_state,
             "kind": model_kind,
         }
 
@@ -104,11 +107,12 @@ class CheckpointWriter:
         normalizer: PlannerStateNormalizer,
         meta: dict[str, object],
         model_kind: str,
+        ema_state_dict: dict[str, object] | None = None,
     ) -> Path:
         file_path = Path(path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        payload = self._build_payload(model, normalizer, meta, model_kind)
+        payload = self._build_payload(model, normalizer, meta, model_kind, ema_state_dict)
         payload["meta"]["kind"] = model_kind
         torch.save(payload, file_path)
         return file_path

@@ -53,6 +53,12 @@ def test_train_arg_resolver_parses_advanced_flags() -> None:
             "0.05",
             "--tensorboard-log-dir",
             "logs/tensorboard",
+            "--checkpoint-every",
+            "3",
+            "--keep-last-checkpoints",
+            "2",
+            "--best-top-k",
+            "2",
         ]
     ).resolve()
 
@@ -60,3 +66,6 @@ def test_train_arg_resolver_parses_advanced_flags() -> None:
     assert values["value_patience"] == 3
     assert values["diffusion_min_delta"] == 0.05
     assert values["tensorboard_log_dir"] == "logs/tensorboard"
+    assert values["checkpoint_every"] == 3
+    assert values["keep_last_checkpoints"] == 2
+    assert values["best_top_k"] == 2

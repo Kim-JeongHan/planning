@@ -134,6 +134,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Keep the best-K checkpoints by loss.",
     )
+    parser.add_argument(
+        "--validation-split",
+        type=float,
+        default=None,
+        help="Hold out portion of data for validation each epoch. Value in [0.0, 1.0).",
+    )
+    parser.add_argument(
+        "--latest-checkpoint-every",
+        type=int,
+        default=None,
+        help="Save latest checkpoint every N epochs. Default follows checkpoint policy.",
+    )
     return parser
 
 
@@ -207,6 +219,16 @@ class TrainArgResolver:
         if casted < 1:
             raise TypeError(f"`{name}` must be >= 1, got {casted!r}")
         return casted
+
+    @staticmethod
+    def _cast_or_raise_optional_float(
+        value: object, name: str,
+    ) -> float | None:
+        if value is None:
+            return None
+        if isinstance(value, (float, int)):
+            return float(value)
+        raise TypeError(f"`{name}` must be a float or null, got {type(value)!r}")
 
     @staticmethod
     def _cast_or_raise_str(value: object) -> str | None:
@@ -292,6 +314,12 @@ class TrainArgResolver:
             "best_top_k": TrainArgResolver._cast_or_raise_optional_positive_int(
                 pick("best_top_k", 1), "best-top-k"
             ),
+            "validation_split": TrainArgResolver._cast_or_raise_optional_float(
+                pick("validation_split", 0.0), "validation-split"
+            ),
+            "latest_checkpoint_every": TrainArgResolver._cast_or_raise_optional_non_negative_int(
+                pick("latest_checkpoint_every", 0), "latest-checkpoint-every"
+            ),
             "tensorboard_log_dir": TrainArgResolver._cast_or_raise_str(
                 pick("tensorboard_log_dir", None)
             ),
@@ -311,34 +339,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "No dataset specified. Provide --dataset or set `dataset` in the YAML config."
         )
 
-    pipeline = DiffusionTrainingPipeline(
-        dataset=values["dataset"],
-        output_root=values["output_root"],
-        horizon=values["horizon"],
-        state_dim=values["state_dim"],
-        n_diffusion_steps=values["n_diffusion_steps"],
-        epochs=values["epochs"],
-        batch_size=values["batch_size"],
-        learning_rate=values["learning_rate"],
-        lr_schedule=values["lr_schedule"],
-        lr_step_size=values["lr_step_size"],
-        lr_gamma=values["lr_gamma"],
-        lr_min=values["lr_min"],
-        discount=values["discount"],
-        seed=values["seed"],
-        train_value=values["train_value"],
-        log_every=values["log_every"],
-        diffusion_max_epochs=values["diffusion_max_epochs"],
-        value_max_epochs=values["value_max_epochs"],
-        diffusion_patience=values["diffusion_patience"],
-        value_patience=values["value_patience"],
-        diffusion_min_delta=values["diffusion_min_delta"],
-        value_min_delta=values["value_min_delta"],
-        checkpoint_every=values["checkpoint_every"],
-        keep_last_checkpoints=values["keep_last_checkpoints"],
-        best_top_k=values["best_top_k"],
-        tensorboard_log_dir=values["tensorboard_log_dir"],
-    )
+    pipeline = DiffusionTrainingPipeline(**values)
     ckpts = pipeline.run()
     print("Saved checkpoints:")
     for path in ckpts:

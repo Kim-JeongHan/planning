@@ -11,3 +11,6 @@ seed: 42
 log_every: 100
 train_value: true
 tensorboard_log_dir: logs/diffusion_logs_h16/tensorboard
+checkpoint_every: 10
+keep_last_checkpoints: 5
+best_top_k: 3

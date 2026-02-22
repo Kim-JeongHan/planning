@@ -1,0 +1,21 @@
+seed: 42
+loadbase: tmp_diffusion_output_with_value_long
+dataset: tmp_diffusion_dataset
+diffusion_loadpath: f:diffusion/defaults_H{horizon}_T{n_diffusion_steps}
+value_loadpath: f:values/defaults_H{horizon}_T{n_diffusion_steps}_d{discount}
+diffusion_epoch: best
+value_epoch: best
+n_guide_steps: 4
+scale: 0.1
+sample_batch_size: 64
+map_size: 20
+z_range: [0.5, 2.5]
+obstacle_count: 0
+obstacle_min_size: 0.5
+obstacle_max_size: 1.2
+obstacle_color: [200, 100, 50]
+start_state: [0.0, 0.0, 1.0]
+goal_state: [2.0, 2.0, 1.0]
+condition_key: 0
+segment_resolution: 0.1
+endpoint_tolerance: 1.5

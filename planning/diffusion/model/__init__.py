@@ -1,14 +1,25 @@
 """Model modules for diffusion training and guidance policy."""
 
-from .diffusion import DiffusionModel, SimpleDiffusionModel
-from .policy import SimpleValueModel, ValueModel
-from .utils import ConditionNormalizer, MLPBackbone
+from .diffusion import DiffusionModel
+from .policy import ValueModel
+from .utils import (
+    Conv1dBlock,
+    Downsample1d,
+    ResidualTemporalBlock,
+    SinusoidalPosEmb,
+    TemporalUnet,
+    TemporalValueNet,
+    Upsample1d,
+)
 
 __all__ = [
-    "ConditionNormalizer",
+    "Conv1dBlock",
     "DiffusionModel",
-    "MLPBackbone",
-    "SimpleDiffusionModel",
-    "SimpleValueModel",
+    "Downsample1d",
+    "ResidualTemporalBlock",
+    "SinusoidalPosEmb",
+    "TemporalUnet",
+    "TemporalValueNet",
+    "Upsample1d",
     "ValueModel",
 ]

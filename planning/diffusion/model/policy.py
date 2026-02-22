@@ -1,125 +1,106 @@
-"""Policy/value model definitions."""
+"""Value model definition (temporal encoder network).
+
+Implements J_φ from Janner et al. (2022) "Planning with Diffusion for Flexible
+Behavior Synthesis" — a differentiable trajectory value estimator used to guide
+the reverse diffusion sampling process toward high-return trajectories.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-
 import torch
+from torch import nn
 
-from .utils import ConditionNormalizer, MLPBackbone
+from .utils import TemporalValueNet
 
-
-class SimpleValueModel:
-    """MLP baseline value model for optional guidance objective."""
-
-    def __new__(cls, *args: object, **kwargs: object) -> SimpleValueModel:
-        return super().__new__(cls)
-
-    @staticmethod
-    def create(
-        *,
-        state_dim: int,
-        horizon: int,
-        n_hidden: int = 256,
-        n_layers: int = 2,
-        condition_dim: int = 0,
-        _n_diffusion_steps: int | None = None,
-        **_: object,
-    ) -> ValueModel:
-        del _n_diffusion_steps
-        input_dim = horizon * state_dim + condition_dim
-        output_dim = 1
-        model = MLPBackbone(
-            input_dim,
-            output_dim,
-            hidden_dim=n_hidden,
-            n_layers=n_layers,
-        )
-        return ValueModel(
-            model,
-            state_dim=state_dim,
-            horizon=horizon,
-            n_hidden=n_hidden,
-            n_layers=n_layers,
-            condition_dim=condition_dim,
-        )
+_DEFAULT_DIM = 32
+_DEFAULT_DIM_MULTS = (1, 2, 4, 8)
 
 
-class ValueModel:
-    """Torch wrapper for value model."""
+class ValueModel(nn.Module):
+    """Trajectory value estimator J_φ.
+
+    Encodes a full trajectory ``[B, H, state_dim]`` and produces a scalar
+    value ``[B, 1]``.  During guided diffusion sampling (Algorithm 1 in the
+    paper), its gradient w.r.t. the trajectory is used to bias the reverse
+    process mean toward high-value regions.
+
+    The model does not take an explicit conditioning vector; goal conditioning
+    is handled through inpainting (fixing the first/last trajectory states
+    during sampling).
+
+    Args:
+        state_dim: Dimension of each state.
+        horizon: Planning horizon (number of timesteps per trajectory).
+        dim: Base hidden-channel dimension (default 32).
+        dim_mults: Channel multipliers at each U-Net level.
+        **_: Accepts and silently ignores legacy keyword arguments
+            (``n_hidden``, ``n_layers``, ``condition_dim``) to ease migration.
+    """
 
     def __init__(
         self,
-        backbone: MLPBackbone,
         *,
         state_dim: int,
         horizon: int,
-        n_hidden: int,
-        n_layers: int,
-        condition_dim: int = 0,
+        dim: int = _DEFAULT_DIM,
+        dim_mults: tuple[int, ...] = _DEFAULT_DIM_MULTS,
+        **_: object,
     ) -> None:
-        self.backbone = backbone
+        super().__init__()
         self.state_dim = int(state_dim)
         self.horizon = int(horizon)
-        self.n_hidden = int(n_hidden)
-        self.n_layers = int(n_layers)
-        self.condition_dim = int(condition_dim)
-        self._condition_normalizer = ConditionNormalizer(self.condition_dim)
+        self.dim = int(dim)
+        self.dim_mults = tuple(dim_mults)
+
+        self.net = TemporalValueNet(
+            transition_dim=self.state_dim,
+            dim=self.dim,
+            dim_mults=self.dim_mults,
+        )
+
         self.hparams = {
             "state_dim": self.state_dim,
             "horizon": self.horizon,
-            "n_hidden": self.n_hidden,
-            "n_layers": self.n_layers,
-            "condition_dim": self.condition_dim,
+            "dim": self.dim,
+            "dim_mults": list(self.dim_mults),
             "model_class_path": "planning.diffusion.model.ValueModel",
         }
 
-    def __call__(
-        self,
-        state: object,
-        condition: dict[str, object] | None = None,
-    ) -> torch.Tensor:
-        flat_state = state.reshape(state.shape[0], -1)
-        condition = self._condition_normalizer(
-            condition,
-            batch_size=state.shape[0],
-            device=state.device,
-            dtype=state.dtype,
-        )
-        inp = torch.cat([flat_state, condition], dim=-1)
-        if inp.shape[1] != self.backbone.backbone[0].in_features:
-            target = self.backbone.backbone[0].in_features
-            if inp.shape[1] > target:
-                inp = inp[:, :target]
-            else:
-                pad = torch.zeros((inp.shape[0], target - inp.shape[1]), dtype=inp.dtype, device=inp.device)
-                inp = torch.cat([inp, pad], dim=-1)
-        return self.backbone(inp)
-
     def forward(
         self,
-        state: object,
-        condition: dict[str, object] | None = None,
+        x: torch.Tensor,
+        condition: object = None,  # accepted but ignored
     ) -> torch.Tensor:
-        return self.__call__(state, condition)
+        """Estimate the value of a trajectory.
 
-    def eval(self) -> ValueModel:
-        self.backbone.eval()
-        return self
+        Args:
+            x: Trajectory tensor ``[B, H, state_dim]``.
+            condition: Accepted for API compatibility; ignored.
 
-    def load_state_dict(
-        self, state_dict: dict[str, object], strict: bool = True
+        Returns:
+            Scalar value per trajectory ``[B, 1]``.
+        """
+        if x.ndim < 3:
+            raise ValueError("x must have shape [B, H, state_dim].")
+        return self.net(x)
+
+    # ------------------------------------------------------------------
+    # Checkpoint interface
+    # ------------------------------------------------------------------
+
+    def load_state_dict(  # type: ignore[override]
+        self,
+        state_dict: dict[str, object],
+        strict: bool = True,
     ) -> tuple[list[str], list[str]]:
-        return self.backbone.load_state_dict(state_dict, strict=strict)
+        incompatible = super().load_state_dict(state_dict, strict=strict)  # type: ignore[arg-type]
+        return incompatible.missing_keys, incompatible.unexpected_keys
 
-    def state_dict(self) -> dict[str, object]:
-        return self.backbone.state_dict()
-
-    def parameters(self) -> Iterable[torch.nn.Parameter]:
-        return self.backbone.parameters()
+    def state_dict(self) -> dict[str, object]:  # type: ignore[override]
+        return super().state_dict()
 
     def set_seed(self, seed: int) -> None:
         torch.manual_seed(seed)
 
 
-__all__ = ["SimpleValueModel", "ValueModel"]
+__all__ = ["ValueModel"]

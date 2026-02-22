@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
-import json
 
-import torch  # type: ignore
 import numpy as np
+import torch  # type: ignore
 
 from ..core import PlannerStateNormalizer
 
@@ -86,7 +86,7 @@ class TrajectoryDataSetSource:
 
 
 class ConditionTensorBuilder:
-    """Create condition tensors from trajectory arrays."""
+    """Create condition tensors from trajectory arrays as concatenated `[start, goal]`."""
 
     @staticmethod
     def build(trajectories: np.ndarray) -> np.ndarray:
@@ -104,10 +104,28 @@ class TorchTensorFactory:
         self.normalizer = normalizer
         self.device = device
 
+    def _normalize_condition(self, trajectories: np.ndarray) -> np.ndarray:
+        """Normalize start/goal condition blocks with the same normalizer as observations."""
+        conditions = ConditionTensorBuilder.build(trajectories)
+        if conditions.ndim != 2:
+            return conditions
+
+        state_dim = int(self.normalizer.mean.shape[0])
+        if conditions.shape[1] == state_dim:
+            return self.normalizer.normalize(conditions)
+        if conditions.shape[1] == 2 * state_dim:
+            start = self.normalizer.normalize(conditions[:, :state_dim])
+            goal = self.normalizer.normalize(conditions[:, state_dim:])
+            return np.concatenate([start, goal], axis=-1)
+        if conditions.shape[1] % state_dim == 0:
+            flat = conditions.reshape(-1, state_dim)
+            return self.normalizer.normalize(flat).reshape(conditions.shape[0], -1)
+        return conditions
+
     def to_torch_tensors(self, trajectories: np.ndarray) -> tuple[object, object]:
         """Convert arrays to torch tensors for training."""
         normalized = self.normalizer.normalize(trajectories)
-        cond = ConditionTensorBuilder.build(trajectories)
+        cond = self._normalize_condition(trajectories)
         obs_t = torch.from_numpy(normalized).to(torch.float32).to(self.device)
         cond_t = torch.from_numpy(cond).to(torch.float32).to(self.device)
         return obs_t, cond_t

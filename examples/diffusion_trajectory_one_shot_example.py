@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from pydantic import BaseModel, ValidationError, field_validator
 import viser
 import yaml
-from pydantic import BaseModel, ValidationError, field_validator
 
 from planning.collision import BoundedCollisionChecker, ObstacleCollisionChecker
 from planning.constraint import select_collision_free_trajectory
@@ -92,7 +92,7 @@ class DiffusionOneShotConfig(BaseModel):
     rollout: RolloutConfig = RolloutConfig()
 
     @classmethod
-    def load(cls, config_path: str) -> DiffusionOneShotConfig:
+    def load(cls, config_path: str) -> "DiffusionOneShotConfig":
         """Load and validate YAML configuration."""
         path = Path(config_path)
         if not path.exists():

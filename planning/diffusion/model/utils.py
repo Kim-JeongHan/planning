@@ -1,109 +1,361 @@
-"""Common neural-network helpers for diffusion/value models."""
+"""Neural-network helpers for diffusion/value models.
+
+Implements the temporal U-Net architecture from Janner et al. (2022) "Planning
+with Diffusion for Flexible Behavior Synthesis".  The core idea is to use 1D
+temporal convolutions with a small receptive field so each denoising step only
+enforces local consistency; composing many steps drives global coherence.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import math
+from itertools import pairwise
 
-import torch  # type: ignore
-import torch.nn as nn  # type: ignore
+import torch
+import torch.nn as nn
+import torch.nn.functional as F  # noqa: N812
 
+# ---------------------------------------------------------------------------
+# Time-step embedding
+# ---------------------------------------------------------------------------
 
-class ConditionNormalizer:
-    """Normalize and project condition tensors to a fixed dimension."""
+class SinusoidalPosEmb(nn.Module):
+    """Sinusoidal position embedding for diffusion timesteps (Vaswani et al.)."""
 
-    def __init__(self, condition_dim: int) -> None:
-        self.condition_dim = int(condition_dim)
+    def __init__(self, dim: int) -> None:
+        super().__init__()
+        self.dim = int(dim)
 
-    def __call__(
-        self,
-        condition: object,
-        *,
-        batch_size: int,
-        device: object,
-        dtype: object,
-    ) -> torch.Tensor:
-        """Normalize condition features to ``[batch_size, condition_dim]``."""
-        if self.condition_dim <= 0:
-            return torch.zeros((batch_size, 0), device=device, dtype=dtype)
-
-        if condition is None:
-            return torch.zeros((batch_size, self.condition_dim), device=device, dtype=dtype)
-
-        if not torch.is_tensor(condition):
-            condition_tensor = torch.as_tensor(condition, device=device, dtype=dtype)
-        else:
-            condition_tensor = condition.to(device=device, dtype=dtype)
-
-        if condition_tensor.ndim == 1:
-            condition_tensor = condition_tensor.reshape(1, -1)
-        elif condition_tensor.ndim != 2:
-            condition_tensor = condition_tensor.reshape(condition_tensor.shape[0], -1)
-
-        if condition_tensor.shape[0] == 1:
-            condition_tensor = condition_tensor.expand(batch_size, -1)
-        elif condition_tensor.shape[0] != batch_size:
-            raise ValueError("Condition batch size must match observation batch size.")
-
-        if condition_tensor.shape[1] >= self.condition_dim:
-            return condition_tensor[:, : self.condition_dim]
-
-        pad = torch.zeros(
-            (batch_size, self.condition_dim - condition_tensor.shape[1]),
-            device=device,
-            dtype=dtype,
+    def forward(self, t: torch.Tensor) -> torch.Tensor:
+        # t: [B] integer timesteps
+        half = self.dim // 2
+        freqs = torch.exp(
+            -math.log(10000) * torch.arange(half, device=t.device, dtype=torch.float32) / max(half - 1, 1)
         )
-        return torch.cat([condition_tensor, pad], dim=-1)
+        args = t.float()[:, None] * freqs[None, :]  # [B, half]
+        return torch.cat([args.sin(), args.cos()], dim=-1)  # [B, dim]
 
 
-class MLPBackbone:
-    """Simple MLP backbone used by both diffusion and value models."""
+# ---------------------------------------------------------------------------
+# Building blocks
+# ---------------------------------------------------------------------------
+
+class Conv1dBlock(nn.Module):
+    """Conv1d → GroupNorm → SiLU building block."""
 
     def __init__(
         self,
-        input_dim: int,
-        output_dim: int,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int,
         *,
-        hidden_dim: int = 256,
-        n_layers: int = 2,
+        n_groups: int = 8,
     ) -> None:
-        layers: list[torch.nn.Module] = []
-        in_dim = int(input_dim)
-        width = int(hidden_dim)
-        for _ in range(max(1, int(n_layers))):
-            layers.append(nn.Linear(in_dim, width))
-            layers.append(nn.SiLU())
-            in_dim = width
-        layers.append(nn.Linear(in_dim, int(output_dim)))
-        self.backbone = nn.Sequential(*layers)
+        super().__init__()
+        # GroupNorm requires n_groups to divide out_channels.
+        actual_groups = max(1, min(n_groups, out_channels))
+        while out_channels % actual_groups != 0 and actual_groups > 1:
+            actual_groups -= 1
+        self.block = nn.Sequential(
+            nn.Conv1d(in_channels, out_channels, kernel_size, padding=kernel_size // 2),
+            nn.GroupNorm(actual_groups, out_channels),
+            nn.SiLU(),
+        )
 
-    def to(self, *args: object, **kwargs: object) -> MLPBackbone:
-        """Mirror core nn.Module API used by checkpoints and scripts."""
-        self.backbone = self.backbone.to(*args, **kwargs)
-        return self
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.block(x)
 
-    def __call__(self, x: object) -> torch.Tensor:
-        return self.backbone(x)
 
-    def parameters(self) -> Iterable[torch.nn.Parameter]:
-        return self.backbone.parameters()
+class ResidualTemporalBlock(nn.Module):
+    """Two Conv1dBlocks with a time-step conditioning and skip connection.
 
-    def state_dict(self) -> dict[str, object]:
-        return self.backbone.state_dict()
+    Input ``x``: ``[B, in_channels, H]`` (channels-first, as used by Conv1d).
+    Input ``t``: ``[B, embed_dim]`` time embedding.
+    Output: ``[B, out_channels, H]``.
+    """
 
-    def load_state_dict(
-        self, state_dict: dict[str, object], strict: bool = True
-    ) -> tuple[list[str], list[str]]:
-        return self.backbone.load_state_dict(state_dict, strict=strict)
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        embed_dim: int,
+        kernel_size: int = 5,
+    ) -> None:
+        super().__init__()
+        self.conv1 = Conv1dBlock(in_channels, out_channels, kernel_size)
+        self.conv2 = Conv1dBlock(out_channels, out_channels, kernel_size)
+        # Projects time embedding → out_channels, broadcast over H.
+        self.time_proj = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(embed_dim, out_channels),
+        )
+        # 1x1 projection for skip connection when channel sizes differ.
+        self.skip = (
+            nn.Conv1d(in_channels, out_channels, 1)
+            if in_channels != out_channels
+            else nn.Identity()
+        )
 
-    def eval(self) -> MLPBackbone:
-        self.backbone.eval()
-        return self
+    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        # x: [B, C_in, H],  t: [B, embed_dim]
+        h = self.conv1(x) + self.time_proj(t).unsqueeze(-1)  # broadcast over H
+        h = self.conv2(h)
+        return h + self.skip(x)
 
-    def __repr__(self) -> str:
-        return f"MLPBackbone(input_dim={self.backbone[0].in_features}, output_dim={self.backbone[-1].out_features})"
+
+class Downsample1d(nn.Module):
+    """Halve the temporal resolution with a strided convolution."""
+
+    def __init__(self, dim: int) -> None:
+        super().__init__()
+        self.conv = nn.Conv1d(dim, dim, kernel_size=3, stride=2, padding=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.conv(x)
+
+
+class Upsample1d(nn.Module):
+    """Double the temporal resolution with a transposed convolution."""
+
+    def __init__(self, dim: int) -> None:
+        super().__init__()
+        self.conv = nn.ConvTranspose1d(dim, dim, kernel_size=4, stride=2, padding=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.conv(x)
+
+
+# ---------------------------------------------------------------------------
+# Temporal U-Net (diffusion denoiser)
+# ---------------------------------------------------------------------------
+
+class TemporalUnet(nn.Module):
+    """Temporal U-Net for trajectory denoising.
+
+    Architecture from Janner et al. 2022 (Figure 2 / Appendix A):
+    - 1D temporal convolutions with a small receptive field (kernel_size=5)
+    - Multi-scale encoder / decoder with skip connections
+    - Sinusoidal time-step conditioning injected into every residual block
+
+    Input shape:  ``x: [B, H, transition_dim]``, ``t: [B]`` (integer timesteps)
+    Output shape: ``[B, H, transition_dim]`` (predicted noise ε)
+    """
+
+    def __init__(
+        self,
+        transition_dim: int,
+        *,
+        dim: int = 32,
+        dim_mults: tuple[int, ...] = (1, 2, 4, 8),
+        kernel_size: int = 5,
+    ) -> None:
+        super().__init__()
+        if dim % 8 != 0:
+            raise ValueError(f"dim must be divisible by 8 for GroupNorm, got {dim}")
+
+        self.transition_dim = int(transition_dim)
+        self.dim = int(dim)
+        self.dim_mults = tuple(dim_mults)
+        self._n_downs = len(dim_mults) - 1  # number of Downsample/Upsample ops
+
+        time_embed_dim = dim * 4
+        self.time_mlp = nn.Sequential(
+            SinusoidalPosEmb(dim),
+            nn.Linear(dim, time_embed_dim),
+            nn.SiLU(),
+            nn.Linear(time_embed_dim, time_embed_dim),
+        )
+
+        # Channel sizes at each U-Net level.
+        dims = [transition_dim] + [dim * m for m in dim_mults]
+        in_out = list(pairwise(dims))
+
+        self.downs = nn.ModuleList([])
+        for idx, (d_in, d_out) in enumerate(in_out):
+            is_last = idx == len(in_out) - 1
+            self.downs.append(
+                nn.ModuleList(
+                    [
+                        ResidualTemporalBlock(d_in, d_out, time_embed_dim, kernel_size),
+                        ResidualTemporalBlock(d_out, d_out, time_embed_dim, kernel_size),
+                        nn.Identity() if is_last else Downsample1d(d_out),
+                    ]
+                )
+            )
+
+        mid_dim = dims[-1]
+        self.mid_block1 = ResidualTemporalBlock(mid_dim, mid_dim, time_embed_dim, kernel_size)
+        self.mid_block2 = ResidualTemporalBlock(mid_dim, mid_dim, time_embed_dim, kernel_size)
+
+        self.ups = nn.ModuleList([])
+        for idx, (d_in, d_out) in enumerate(list(reversed(in_out[1:]))):
+            is_last = idx >= len(in_out) - 1
+            self.ups.append(
+                nn.ModuleList(
+                    [
+                        # skip connection doubles the input channels
+                        ResidualTemporalBlock(d_out * 2, d_in, time_embed_dim, kernel_size),
+                        ResidualTemporalBlock(d_in, d_in, time_embed_dim, kernel_size),
+                        nn.Identity() if is_last else Upsample1d(d_in),
+                    ]
+                )
+            )
+
+        self.final_conv = nn.Sequential(
+            Conv1dBlock(dims[1], dims[1], kernel_size),
+            nn.Conv1d(dims[1], transition_dim, 1),
+        )
+
+    def _pad_to_multiple(self, x: torch.Tensor) -> tuple[torch.Tensor, int]:
+        """Pad sequence length to the nearest multiple of 2^n_downs."""
+        if self._n_downs == 0:
+            return x, 0
+        divisor = 2 ** self._n_downs
+        h = x.shape[-1]
+        pad = (-h) % divisor  # smallest non-negative pad to reach a multiple
+        if pad > 0:
+            x = F.pad(x, (0, pad))
+        return x, pad
+
+    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        # x: [batch, horizon, dim],  t: [batch]
+        orig_h = x.shape[1]
+        x = x.permute(0, 2, 1)  # [batch, dim, horizon] - channels-first for Conv1d
+
+        x, pad = self._pad_to_multiple(x)
+
+        t_emb = self.time_mlp(t)  # [B, time_embed_dim]
+
+        skips: list[torch.Tensor] = []
+        for resnet1, resnet2, downsample in self.downs:
+            x = resnet1(x, t_emb)
+            x = resnet2(x, t_emb)
+            skips.append(x)
+            x = downsample(x)
+
+        x = self.mid_block1(x, t_emb)
+        x = self.mid_block2(x, t_emb)
+
+        for resnet1, resnet2, upsample in self.ups:
+            skip = skips.pop()
+            # Crop skip to match x if sizes differ (can happen with odd lengths).
+            if skip.shape[-1] != x.shape[-1]:
+                skip = skip[..., : x.shape[-1]]
+            x = torch.cat([x, skip], dim=1)
+            x = resnet1(x, t_emb)
+            x = resnet2(x, t_emb)
+            x = upsample(x)
+
+        x = self.final_conv(x)
+
+        # Crop padding, restore original shape.
+        if pad > 0:
+            x = x[..., :orig_h]
+        return x.permute(0, 2, 1)  # [batch, horizon, dim]
+
+
+# ---------------------------------------------------------------------------
+# Temporal value network (encoder-only U-Net → scalar)
+# ---------------------------------------------------------------------------
+
+class TemporalValueNet(nn.Module):
+    """Trajectory value estimator based on the temporal U-Net encoder.
+
+    Encodes a trajectory ``[B, H, D]`` with a U-Net downsampling path, then
+    global-averages over the time dimension and projects to a scalar ``[B, 1]``.
+    Used as J_φ in the guided diffusion planning algorithm.
+
+    This model is differentiable w.r.t. its input, enabling gradient-based
+    guidance during reverse diffusion sampling.
+    """
+
+    def __init__(
+        self,
+        transition_dim: int,
+        *,
+        dim: int = 32,
+        dim_mults: tuple[int, ...] = (1, 2, 4, 8),
+        kernel_size: int = 5,
+    ) -> None:
+        super().__init__()
+        if dim % 8 != 0:
+            raise ValueError(f"dim must be divisible by 8 for GroupNorm, got {dim}")
+
+        self.transition_dim = int(transition_dim)
+        self.dim = int(dim)
+        self.dim_mults = tuple(dim_mults)
+        self._n_downs = len(dim_mults) - 1
+
+        time_embed_dim = dim * 4  # unused at inference but kept for architectural parity
+        # Lightweight time MLP (identity by default - value model usually not time-conditioned).
+        self._time_embed_dim = time_embed_dim
+
+        dims = [transition_dim] + [dim * m for m in dim_mults]
+        in_out = list(pairwise(dims))
+
+        self.encoder = nn.ModuleList([])
+        for idx, (d_in, d_out) in enumerate(in_out):
+            is_last = idx == len(in_out) - 1
+            self.encoder.append(
+                nn.ModuleList(
+                    [
+                        ResidualTemporalBlock(d_in, d_out, time_embed_dim, kernel_size),
+                        ResidualTemporalBlock(d_out, d_out, time_embed_dim, kernel_size),
+                        nn.Identity() if is_last else Downsample1d(d_out),
+                    ]
+                )
+            )
+
+        # Dummy constant time embedding (value model does not use diffusion timestep).
+        mid_dim = dims[-1]
+        self.mid_block = ResidualTemporalBlock(mid_dim, mid_dim, time_embed_dim, kernel_size)
+        # Head: global average pool over H, then linear to scalar.
+        self.head = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(mid_dim, 1),
+        )
+
+        # Register a learned constant to fill the time-embedding slot.
+        self.register_buffer("_const_t", torch.zeros(time_embed_dim))
+
+    def _get_t_emb(self, batch_size: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        return self._const_t.to(device=device, dtype=dtype).unsqueeze(0).expand(batch_size, -1)
+
+    def _pad_to_multiple(self, x: torch.Tensor) -> tuple[torch.Tensor, int]:
+        if self._n_downs == 0:
+            return x, 0
+        divisor = 2 ** self._n_downs
+        h = x.shape[-1]
+        pad = (-h) % divisor
+        if pad > 0:
+            x = F.pad(x, (0, pad))
+        return x, pad
+
+    def forward(self, x: torch.Tensor, condition: object = None) -> torch.Tensor:
+        # x: [batch, horizon, dim]; condition accepted but ignored (use inpainting instead).
+        batch = x.shape[0]
+        x = x.permute(0, 2, 1)  # [batch, dim, horizon]
+
+        x, _ = self._pad_to_multiple(x)
+        t_emb = self._get_t_emb(batch, device=x.device, dtype=x.dtype)
+
+        for resnet1, resnet2, downsample in self.encoder:
+            x = resnet1(x, t_emb)
+            x = resnet2(x, t_emb)
+            x = downsample(x)
+
+        x = self.mid_block(x, t_emb)
+        # Global average over the (now downsampled) time dimension.
+        x = x.mean(dim=-1)  # [B, mid_dim]
+        return self.head(x)  # [B, 1]
 
 
 __all__ = [
-    "ConditionNormalizer",
-    "MLPBackbone",
+    "Conv1dBlock",
+    "Downsample1d",
+    "ResidualTemporalBlock",
+    "SinusoidalPosEmb",
+    "TemporalUnet",
+    "TemporalValueNet",
+    "Upsample1d",
 ]

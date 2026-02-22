@@ -1,5 +1,6 @@
 """Training package for local diffuser implementation."""
 
+from ..config import DiffusionTrainingPipelineConfig
 from .checkpoint import CheckpointConfig, CheckpointPathManager, CheckpointWriter
 from .config import DiffusionTrainingConfig
 from .trainer import DiffusionTrainingPipeline
@@ -10,4 +11,5 @@ __all__ = [
     "CheckpointWriter",
     "DiffusionTrainingConfig",
     "DiffusionTrainingPipeline",
+    "DiffusionTrainingPipelineConfig",
 ]

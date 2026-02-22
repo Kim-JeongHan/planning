@@ -1,56 +1,73 @@
-"""Sampling helpers for the local diffuser compatibility layer."""
+"""Sampling helpers for the local diffuser compatibility layer.
+
+Implements the guided diffusion planning algorithm from Janner et al. (2022)
+"Planning with Diffusion for Flexible Behavior Synthesis":
+
+  * Algorithm 1 (Guided Diffusion Planning): reverse diffusion with a value-
+    function guide applied to the predicted mean μ, before adding noise.
+  * Inpainting-based conditioning: at each denoising step, constrained
+    timestep values (e.g. start/goal states) are written back into the
+    trajectory to enforce boundary conditions without any special network head.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from types import SimpleNamespace
 
 import numpy as np
-import torch  # type: ignore
+import torch
 
 from .core import PlannerStateNormalizer
 from .training.noise import DiffusionSchedule
 
+# ---------------------------------------------------------------------------
+# Condition helpers
+# ---------------------------------------------------------------------------
+
+# Inpainting conditions map ``{timestep_index: state_array}``.
+InpaintingConditions = Mapping[int, np.ndarray]
+
 
 class ConditionAdapter:
-    """Normalize condition inputs used by guides and samplers."""
+    """Convert various condition formats to inpainting dicts or flat vectors."""
+
+    @staticmethod
+    def to_inpainting(
+        conditions: dict[object, object] | None,
+        state_dim: int,
+    ) -> dict[int, np.ndarray]:
+        """Normalise a raw conditions dict to ``{int_timestep: ndarray}`` format.
+
+        Accepts either:
+          - Already-inpainting format: ``{0: array, H-1: array}``
+          - Legacy flat-vector format: ``{0: flat_vector}`` (vector interpreted
+            as the start state; goal is not constrained)
+        """
+        if not conditions:
+            return {}
+        result: dict[int, np.ndarray] = {}
+        for key, value in conditions.items():
+            if not isinstance(key, (int, np.integer)):
+                continue
+            arr = np.asarray(value, dtype=float).ravel()
+            result[int(key)] = arr[:state_dim]
+        return result
 
     @staticmethod
     def to_vector(conditions: dict[object, object] | None, state_dim: int) -> np.ndarray:
+        """Extract a single goal vector from a conditions dict (legacy helper)."""
         if not conditions:
             return np.zeros((state_dim,), dtype=float)
-
-        goal = conditions.get("goal", None)
-        if isinstance(goal, (list, tuple, np.ndarray)):
-            goal_array = np.asarray(goal, dtype=float)
-            return goal_array[:state_dim]
-
-        if isinstance(conditions, dict) and len(conditions):
-            for key in ("goal", "target", "end", "final", "pose"):
-                candidate = conditions.get(key, None)
-                if isinstance(candidate, (list, tuple, np.ndarray)):
-                    candidate_arr = np.asarray(candidate, dtype=float)
-                    if candidate_arr.size >= state_dim:
-                        if (
-                            candidate_arr.size % state_dim == 0
-                            and candidate_arr.size >= 2 * state_dim
-                        ):
-                            candidate_arr = candidate_arr.reshape(-1, state_dim)
-                            return candidate_arr[-1]
-                        return candidate_arr[:state_dim]
-
-            last = list(conditions.values())[-1]
-            if isinstance(last, (list, tuple, np.ndarray)):
-                last_arr = np.asarray(last, dtype=float)
-                if last_arr.size >= state_dim:
-                    if (
-                        last_arr.size % state_dim == 0
-                        and last_arr.size >= 2 * state_dim
-                    ):
-                        last_arr = last_arr.reshape(-1, state_dim)
-                        return last_arr[-1]
-                    return last_arr[:state_dim]
-
+        for key in ("goal", "target", "end", "final", "pose"):
+            candidate = conditions.get(key)
+            if isinstance(candidate, (list, tuple, np.ndarray)):
+                arr = np.asarray(candidate, dtype=float)
+                return arr[:state_dim]
+        last = list(conditions.values())[-1]
+        if isinstance(last, (list, tuple, np.ndarray)):
+            arr = np.asarray(last, dtype=float)
+            return arr[:state_dim]
         return np.zeros((state_dim,), dtype=float)
 
     @staticmethod
@@ -65,21 +82,22 @@ class ConditionAdapter:
             if fallback_dim is None:
                 raise ValueError("fallback_dim is required when condition is a mapping")
             condition = ConditionAdapter.to_vector(condition, fallback_dim)
-
         condition_array = np.asarray(condition, dtype=float)
         if condition_array.ndim == 1:
             condition_array = condition_array.reshape(1, -1)
         elif condition_array.ndim != 2:
             condition_array = condition_array.reshape(condition_array.shape[0], -1)
-
         if batch_size is not None:
             if condition_array.shape[0] == 1:
                 condition_array = np.repeat(condition_array, batch_size, axis=0)
             elif condition_array.shape[0] != batch_size:
                 condition_array = condition_array[:batch_size]
-
         return condition_array
 
+
+# ---------------------------------------------------------------------------
+# Model predictor (wraps the torch model for numpy-based sampling loops)
+# ---------------------------------------------------------------------------
 
 class ModelPredictor:
     """Tiny adapter for model inference during sampling."""
@@ -87,63 +105,39 @@ class ModelPredictor:
     def __init__(self, *, model: object | None = None) -> None:
         self.model = model
 
-    @staticmethod
-    def _as_torch_tensor(value: np.ndarray) -> torch.Tensor:
-        return torch.as_tensor(value, dtype=torch.float32)
-
-    def _to_condition_matrix(
-        self,
-        condition: dict[object, object] | None,
-        batch_size: int,
-        fallback_dim: int,
-    ) -> np.ndarray | None:
-        return ConditionAdapter.to_matrix(
-            condition,
-            batch_size=batch_size,
-            fallback_dim=fallback_dim,
-        )
-
-    def _model_condition_dim(self, state_dim: int) -> int:
-        condition_dim = getattr(self.model, "condition_dim", None)
-        if isinstance(condition_dim, (int, np.integer)) and condition_dim > 0:
-            return int(condition_dim)
-        return int(state_dim)
-
     def predict(
         self,
         x: np.ndarray,
         t: np.ndarray,
-        condition: dict[object, object] | None,
+        condition: dict[object, object] | None = None,
     ) -> np.ndarray:
+        """Predict noise ε for trajectory ``x`` at timesteps ``t``."""
         if self.model is None:
             return np.zeros_like(x)
 
         if hasattr(self.model, "predict_numpy"):
-            return np.asarray(self.model.predict_numpy(x, t, condition), dtype=float)
+            return np.asarray(self.model.predict_numpy(x, t), dtype=float)
 
         if hasattr(self.model, "forward"):
-            with torch.no_grad():  # type: ignore[operator]
-                model_input = self._as_torch_tensor(x)
-                t_tensor = torch.as_tensor(t, dtype=torch.long)
-                condition_array = self._to_condition_matrix(
-                    condition,
-                    batch_size=x.shape[0],
-                    fallback_dim=self._model_condition_dim(x.shape[-1]),
-                )
-                condition_tensor = None
-                if condition_array is not None:
-                    condition_tensor = self._as_torch_tensor(condition_array).to(
-                        dtype=model_input.dtype,
-                        device=model_input.device,
-                    )
-                outputs = self.model(model_input, t_tensor, condition_tensor)  # type: ignore[misc]
-                return np.asarray(outputs.detach().cpu().numpy(), dtype=float)
+            with torch.no_grad():
+                x_t = torch.as_tensor(x, dtype=torch.float32)
+                t_t = torch.as_tensor(t, dtype=torch.long)
+                eps = self.model(x_t, t_t)
+                return np.asarray(eps.detach().cpu().numpy(), dtype=float)
 
         return np.zeros_like(x, dtype=float)
 
 
+# ---------------------------------------------------------------------------
+# Guidance policy (computes ∇J for a value model)
+# ---------------------------------------------------------------------------
+
 class GuidancePolicy:
-    """Reusable guidance policy with optional differentiable model term."""
+    """Compute gradient-based guidance from a differentiable value model.
+
+    The gradient ∇J(μ) is used in Algorithm 1 to shift the reverse-process mean:
+        τ^{i-1} ~ N(μ + a·Σ·∇J(μ), Σ^i)  (a = alpha_t)
+    """
 
     def __init__(
         self,
@@ -162,108 +156,85 @@ class GuidancePolicy:
         t: np.ndarray,
         condition: dict[object, object] | None = None,
     ) -> np.ndarray:
+        """Return ∇J(x) or a heuristic fallback gradient."""
         state_dim = x.shape[-1]
-        target = self._fallback_target(x, condition, state_dim)
-        if self.model is None:
-            return target
+        if self.model is not None:
+            grad = self._value_gradient(x)
+            if grad is not None:
+                return grad
+        return self._goal_gradient(x, condition, state_dim)
 
-        model_guidance = self._model_guidance(x, t, condition)
-        if model_guidance is not None:
-            return model_guidance
-        return target
-
-    @staticmethod
-    def _target_goal_vector(condition: dict[object, object] | None, state_dim: int) -> np.ndarray:
-        return ConditionAdapter.to_vector(condition, state_dim)
-
-    def _fallback_target(
+    def _goal_gradient(
         self,
         x: np.ndarray,
         condition: dict[object, object] | None,
         state_dim: int,
     ) -> np.ndarray:
-        goal = self._target_goal_vector(condition, state_dim)
+        """Fallback gradient: pull trajectory toward goal state."""
+        goal = ConditionAdapter.to_vector(condition, state_dim)
         if goal.size == 0:
             return np.zeros_like(x, dtype=float)
-        goal_vector = goal.reshape((1, 1, -1))
-        return np.clip((goal_vector - x) * self._fallback_scale, -1.0, 1.0)
+        return np.clip((goal.reshape(1, 1, -1) - x) * self._fallback_scale, -1.0, 1.0)
 
-    def _model_condition_dim(self, state_dim: int) -> int:
-        condition_dim = getattr(self.model, "condition_dim", None)
-        if isinstance(condition_dim, (int, np.integer)) and condition_dim > 0:
-            return int(condition_dim)
-        return int(state_dim)
-
-    def _to_condition_matrix(
-        self,
-        condition: dict[object, object] | None,
-        batch_size: int,
-        state_dim: int,
-    ) -> np.ndarray | None:
-        if condition is None:
-            return None
-        fallback_dim = self._model_condition_dim(state_dim)
-        return ConditionAdapter.to_matrix(
-            condition,
-            batch_size=batch_size,
-            fallback_dim=fallback_dim,
-        )
-
-    def _model_guidance(
-        self,
-        x: np.ndarray,
-        t: np.ndarray,
-        condition: dict[object, object] | None,
-    ) -> np.ndarray | None:
-        if x.ndim != 3:
-            return None
+    def _value_gradient(self, x: np.ndarray) -> np.ndarray | None:
+        """Compute ∇_x J(x) via autograd through the value model."""
         if not callable(self.model):
             return None
-
-        x_tensor = torch.as_tensor(x, dtype=torch.float32)
-        x_tensor.requires_grad_(True)
-        condition_matrix = self._to_condition_matrix(
-            condition,
-            batch_size=x.shape[0],
-            state_dim=x.shape[-1],
-        )
-        condition_tensor: torch.Tensor | None = None
-        if condition_matrix is not None:
-            condition_tensor = torch.as_tensor(
-                condition_matrix,
-                dtype=x_tensor.dtype,
-                device=x_tensor.device,
-            )
-            if condition_tensor.ndim == 1:
-                condition_tensor = condition_tensor.reshape(1, -1)
-            if condition_tensor.shape[0] == 1:
-                condition_tensor = condition_tensor.expand(x.shape[0], -1)
-
+        if x.ndim != 3:
+            return None
+        x_t = torch.as_tensor(x, dtype=torch.float32).requires_grad_(True)
         try:
             with torch.enable_grad():
-                value = self.model(x_tensor, condition_tensor)  # type: ignore[misc]
+                value = self.model(x_t)
                 if not torch.is_tensor(value):
                     return None
-                value = value.reshape(value.shape[0], -1).mean(dim=1)
                 value.mean().backward()
-                if x_tensor.grad is None:
-                    return None
-                grad = -x_tensor.grad.detach().cpu().numpy()
-                if not np.isfinite(grad).all():
-                    return None
-                return np.clip(grad, -1.0, 1.0)
+            if x_t.grad is None:
+                return None
+            grad = x_t.grad.detach().cpu().numpy()
+            if not np.isfinite(grad).all():
+                return None
+            return np.clip(grad, -1.0, 1.0)
         except Exception:
             return None
 
 
+# ---------------------------------------------------------------------------
+# Core reverse-diffusion loop (Algorithm 1)
+# ---------------------------------------------------------------------------
+
 class DiffusionSamplingEngine:
-    """Core reverse-diffusion loop used by guided policy."""
+    """Reverse diffusion with optional guidance and inpainting conditioning.
+
+    Implements Algorithm 1 from Janner et al. 2022:
+
+    1.  Initialise τ^N ~ N(0, I)
+    2.  For i = N, …, 1:
+        a.  Compute reverse-process mean  μ = μ_θ(τ^i, i)
+        b.  (If guide) compute gradient   g = ∇J(μ)
+        c.  Shift mean:                   μ ← μ + a·Σ·g  (a = alpha_t)
+        d.  Sample:                       τ^{i-1} ~ N(μ, Σ^i)
+        e.  Inpaint constrained timesteps in τ^{i-1}
+    3.  Return τ^0
+    """
 
     def __init__(self, schedule: DiffusionSchedule, *, seed: int | None = None) -> None:
         self.schedule = schedule
         self.rng = np.random.default_rng(seed)
-        self.predictor = ModelPredictor()
-        self.guidance_policy = GuidancePolicy()
+
+    @staticmethod
+    def _apply_inpainting(
+        trajectory: np.ndarray,
+        inpaint: dict[int, np.ndarray],
+    ) -> np.ndarray:
+        """Overwrite constrained timesteps with the known conditioning values."""
+        if not inpaint:
+            return trajectory
+        traj = trajectory.copy()
+        for t_idx, value in inpaint.items():
+            state_dim = min(value.shape[0], traj.shape[-1])
+            traj[:, t_idx, :state_dim] = value[:state_dim]
+        return traj
 
     def sample(
         self,
@@ -283,53 +254,65 @@ class DiffusionSamplingEngine:
     ) -> np.ndarray:
         if seed is not None:
             self.rng = np.random.default_rng(seed)
-        trajectory = self.rng.normal(size=sample_shape)
+
         active_schedule = self.schedule if schedule is None else schedule
+        batch, _, state_dim = sample_shape
         predictor = ModelPredictor(model=model)
-        guide_policy = guide if guide is not None else GuidancePolicy(model=None)
+        guide_policy: GuidancePolicy | None = guide if guide is not None else None
+
+        # Build inpainting dict from conditions.
+        inpaint = ConditionAdapter.to_inpainting(condition, state_dim)
+
+        # Initialise from standard Gaussian; immediately inpaint known states.
+        trajectory = self.rng.normal(size=sample_shape)
+        trajectory = self._apply_inpainting(trajectory, inpaint)
 
         for step in range(active_schedule.n_diffusion_steps - 1, -1, -1):
-            t_index = np.full((sample_shape[0],), step, dtype=int)
+            t_index = np.full((batch,), step, dtype=int)
 
-            model_eps = predictor.predict(trajectory, t_index, condition)
-            if model_eps.shape != trajectory.shape:
-                model_eps = np.zeros_like(trajectory)
-
-            target = np.zeros_like(trajectory)
-            if guide_policy is not None and step >= t_stopgrad:
-                total = 0
-                for _ in range(max(1, n_guide_steps)):
-                    total += guide_policy(trajectory, t_index, condition)
-                target = np.asarray(total / max(1.0, float(n_guide_steps)))
-
-            if not np.isfinite(model_eps).all():
-                model_eps = np.zeros_like(trajectory)
-            if not np.isfinite(target).all():
-                target = np.zeros_like(trajectory)
+            # --- ε-prediction and reverse-process mean ---
+            eps = predictor.predict(trajectory, t_index)
+            if eps.shape != trajectory.shape:
+                eps = np.zeros_like(trajectory)
 
             alpha = float(active_schedule.alpha[step])
             alpha_bar = float(active_schedule.alpha_bar[step])
             beta = float(active_schedule.beta(step))
-            posterior_std = float(np.sqrt(max(1e-12, active_schedule.posterior_variance[step])))
+            sigma = float(np.sqrt(max(1e-12, active_schedule.posterior_variance[step])))
 
-            den = np.sqrt(max(1e-12, 1.0 - alpha_bar))
-            trajectory = (
-                (trajectory - beta / den * model_eps) / np.sqrt(max(1e-12, alpha))
-            )
+            den = float(np.sqrt(max(1e-12, 1.0 - alpha_bar)))
+            # μ = (τ^i - β/sqrt(1-alpha_bar) * ε_θ) / sqrt(alpha)  (DDPM reverse mean)
+            mu = (trajectory - beta / den * eps) / float(np.sqrt(max(1e-12, alpha)))
 
+            # --- Guided sampling (Algorithm 1, lines 7-8) ---
             if guide_policy is not None and step >= t_stopgrad:
-                effective_scale = scale / max(1.0, float(step + 1))
-                if scale_grad_by_std:
-                    effective_scale /= posterior_std
-                trajectory = trajectory - effective_scale * target
+                guidance_sum = np.zeros_like(mu)
+                for _ in range(max(1, n_guide_steps)):
+                    g = guide_policy(mu, t_index, condition)
+                    if np.isfinite(g).all():
+                        guidance_sum = guidance_sum + g
+                grad = guidance_sum / max(1.0, float(n_guide_steps))
 
-            if step > 0:
-                trajectory = trajectory + posterior_std * self.rng.normal(size=sample_shape)
+                # Scale: alpha * sigma^2 * grad  (Equation 3 in paper)
+                guidance_scale = scale * (sigma**2 if scale_grad_by_std else sigma)
+                mu = mu + guidance_scale * grad
+
+            # --- Sample τ^{i-1} ~ N(μ, Σ^i) ---
+            noise = self.rng.normal(size=sample_shape) if step > 0 else 0.0
+            trajectory = mu + sigma * noise
+
+            # --- Inpainting: restore constrained timesteps ---
+            trajectory = self._apply_inpainting(trajectory, inpaint)
+
         return np.asarray(trajectory, dtype=float)
 
 
+# ---------------------------------------------------------------------------
+# Value guide wrapper
+# ---------------------------------------------------------------------------
+
 class ValueGuide:
-    """Small goal-directed guide used during sampling."""
+    """Thin wrapper around GuidancePolicy for use with GuidedPolicy."""
 
     def __init__(self, model: object | None = None, verbose: bool = False, **_: object) -> None:
         self.model = model
@@ -345,8 +328,17 @@ class ValueGuide:
         return self._policy(x, t, condition)
 
 
+# ---------------------------------------------------------------------------
+# High-level policy
+# ---------------------------------------------------------------------------
+
 class GuidedPolicy:
-    """Policy wrapper that produces entire trajectory trajectories."""
+    """Produces full trajectory batches via guided reverse diffusion.
+
+    Accepts conditions as an inpainting dict ``{timestep_index: state_array}``.
+    The start state (timestep 0) and goal state (timestep H-1) are fixed via
+    inpainting, not via a condition vector passed to the denoising network.
+    """
 
     def __init__(
         self,
@@ -369,22 +361,18 @@ class GuidedPolicy:
         self.diffusion_model = diffusion_model
         self.normalizer = normalizer
         self.preprocess_fns = preprocess_fns or []
-        self.sample_fn = sample_fn
         self.n_guide_steps = n_guide_steps
         self.t_stopgrad = t_stopgrad
         self.scale_grad_by_std = scale_grad_by_std
         self.verbose = verbose
 
-        horizon = int(getattr(diffusion_model, "horizon", normalizer.mean.size))
-        state_dim = int(getattr(diffusion_model, "state_dim", normalizer.mean.size))
-        self.horizon = max(1, horizon)
-        self.state_dim = max(1, state_dim)
-        self.schedule = DiffusionSchedule.linear(
+        self.horizon = max(1, int(getattr(diffusion_model, "horizon", normalizer.mean.size)))
+        self.state_dim = max(1, int(getattr(diffusion_model, "state_dim", normalizer.mean.size)))
+        self.schedule = DiffusionSchedule.cosine(
             n_diffusion_steps=int(getattr(diffusion_model, "n_diffusion_steps", 100))
         )
         self._engine = DiffusionSamplingEngine(self.schedule)
-        if self.sample_fn is None:
-            self.sample_fn = self._engine.sample
+        self.sample_fn = sample_fn if sample_fn is not None else self._engine.sample
 
     def _prepare_conditions(
         self, conditions: dict[object, object] | None
@@ -401,18 +389,18 @@ class GuidedPolicy:
         verbose: bool,
     ) -> np.ndarray:
         prepared = self._prepare_conditions(conditions)
-        sample_kwargs = {
-            "sample_shape": (batch_size, self.horizon, self.state_dim),
-            "schedule": self.schedule,
-            "guide": self.guide,
-            "condition": prepared,
-            "n_guide_steps": self.n_guide_steps,
-            "t_stopgrad": self.t_stopgrad,
-            "scale_grad_by_std": self.scale_grad_by_std,
-            "scale": self.scale,
-            "verbose": verbose or self.verbose,
-        }
-        return self.sample_fn(self.diffusion_model, **sample_kwargs)
+        return self.sample_fn(
+            self.diffusion_model,
+            sample_shape=(batch_size, self.horizon, self.state_dim),
+            schedule=self.schedule,
+            guide=self.guide,
+            condition=prepared,
+            n_guide_steps=self.n_guide_steps,
+            t_stopgrad=self.t_stopgrad,
+            scale_grad_by_std=self.scale_grad_by_std,
+            scale=self.scale,
+            verbose=verbose or self.verbose,
+        )
 
     def __call__(
         self,

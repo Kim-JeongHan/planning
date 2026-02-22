@@ -42,20 +42,18 @@ def test_checkpoint_catalog_collects_epoch_files(tmp_path: Path) -> None:
 def test_diffusion_artifact_loader_loads_epoch_checkpoint(tmp_path: Path) -> None:
     torch = pytest.importorskip("torch")
 
-    from planning.diffusion.model import SimpleDiffusionModel
+    from planning.diffusion.model import DiffusionModel
 
     dataset = "unit-dataset"
     loadbase = tmp_path / "logs"
     root = loadbase / dataset / "diffusion" / "defaults_H4_T8"
     root.mkdir(parents=True, exist_ok=True)
 
-    model = SimpleDiffusionModel.create(
+    model = DiffusionModel(
         state_dim=3,
         horizon=4,
         n_diffusion_steps=8,
-        n_hidden=32,
-        n_layers=1,
-        condition_dim=6,
+        dim=32,
     )
     normalizer = PlannerStateNormalizer.identity(3)
     payload = {
@@ -64,9 +62,7 @@ def test_diffusion_artifact_loader_loads_epoch_checkpoint(tmp_path: Path) -> Non
             "state_dim": 3,
             "horizon": 4,
             "n_diffusion_steps": 8,
-            "n_hidden": 32,
-            "n_layers": 1,
-            "condition_dim": 6,
+            "dim": 32,
         },
         "normalizer": normalizer.to_dict(),
         "meta": {
