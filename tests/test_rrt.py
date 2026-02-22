@@ -2,7 +2,35 @@
 
 import numpy as np
 
-from planning.sampling import RRT, RRTConfig, RRTConnect, RRTConnectConfig
+from planning.sampling import (
+    RRT,
+    GoalBiasedSampler,
+    RRTConfig,
+    RRTConnect,
+    RRTConnectConfig,
+    RRTStar,
+    RRTStarConfig,
+)
+from planning.sampling.sampler import Sampler
+
+
+class DummySampler(Sampler):
+    """Sampler used to verify kwargs forwarding."""
+
+    def __init__(
+        self,
+        bounds: list[tuple[float, float]],
+        *,
+        marker: str = "default",
+        **kwargs: object,
+    ) -> None:
+        super().__init__(bounds)
+        self.marker = marker
+        self.extra_kwargs = kwargs
+
+    def sample(self) -> np.ndarray:
+        """Return deterministic sample."""
+        return np.zeros(self.dim)
 
 
 def test_rrt_simple_2d():
@@ -175,3 +203,78 @@ def test_rrt_connect_collision_start():
     path = rrt_connect.plan()
 
     assert path is None  # Should fail immediately
+
+
+def test_rrt_sampler_kwargs_are_passed_to_custom_sampler() -> None:
+    """Custom sampler should receive provided sampler_kwargs."""
+    rrt = RRT(
+        start_state=(0, 0, 0),
+        goal_state=(4, 4, 1),
+        bounds=[(-1.0, 6.0), (-1.0, 6.0), (0.0, 3.0)],
+        config=RRTConfig(
+            sampler=DummySampler,
+            sampler_kwargs={"marker": "custom", "alpha": 0.75},
+        ),
+    )
+
+    assert isinstance(rrt.sampler, DummySampler)
+    assert rrt.sampler.marker == "custom"
+    assert rrt.sampler.extra_kwargs["alpha"] == 0.75
+
+
+def test_rrt_goal_biased_sampler_uses_config_values() -> None:
+    """Goal bias from config should override any conflicting sampler_kwargs."""
+    rrt = RRT(
+        start_state=(0, 0, 0),
+        goal_state=(4, 4, 1),
+        bounds=[(-1.0, 6.0), (-1.0, 6.0), (0.0, 3.0)],
+        config=RRTConfig(
+            sampler=GoalBiasedSampler,
+            goal_bias=0.2,
+            seed=5,
+            sampler_kwargs={
+                "goal_bias": 0.9,
+                "goal_state": np.array([999.0, 999.0, 999.0]),
+            },
+        ),
+    )
+
+    assert rrt.sampler.goal_bias == 0.2
+    assert np.allclose(rrt.sampler.goal_state, np.array([4.0, 4.0, 1.0]))
+
+
+def test_rrt_star_sampler_kwargs_are_passed_to_custom_sampler() -> None:
+    """RRT* should also forward sampler_kwargs to custom sampler."""
+    rrt_star = RRTStar(
+        start_state=(0, 0, 0),
+        goal_state=(3, 3, 1),
+        bounds=[(-1.0, 6.0), (-1.0, 6.0), (0.0, 3.0)],
+        config=RRTStarConfig(
+            sampler=DummySampler,
+            sampler_kwargs={"marker": "rrtstar", "beta": 2},
+        ),
+    )
+
+    assert isinstance(rrt_star.sampler, DummySampler)
+    assert rrt_star.sampler.marker == "rrtstar"
+    assert rrt_star.sampler.extra_kwargs["beta"] == 2
+
+
+def test_rrt_star_goal_biased_sampler_uses_config_values() -> None:
+    """Goal bias from config should override any conflicting sampler_kwargs."""
+    rrt_star = RRTStar(
+        start_state=(0, 0, 0),
+        goal_state=(4, 4, 1),
+        bounds=[(-1.0, 6.0), (-1.0, 6.0), (0.0, 3.0)],
+        config=RRTStarConfig(
+            sampler=GoalBiasedSampler,
+            goal_bias=0.15,
+            sampler_kwargs={
+                "goal_bias": 0.7,
+                "goal_state": np.array([999.0, 999.0, 999.0]),
+            },
+        ),
+    )
+
+    assert rrt_star.sampler.goal_bias == 0.15
+    assert np.allclose(rrt_star.sampler.goal_state, np.array([4.0, 4.0, 1.0]))
