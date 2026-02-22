@@ -77,11 +77,13 @@ class DiffusionEpochTrainer:
         self.functional = functional_backend
         self.ema = ema
         self._alpha_bar = self.torch.as_tensor(schedule.alpha_bar, dtype=self.torch.float32)
+        self._model_device = next(model.parameters()).device  # type: ignore[union-attr]
 
     def train_epoch(self, loader: object) -> float:
         total = 0.0
         count = 0
         for observations, _condition in loader:
+            observations = observations.to(self._model_device, non_blocking=True)
             noise = self.torch.randn_like(observations)
             t = self.torch.randint(
                 0,
@@ -115,6 +117,7 @@ class DiffusionEpochTrainer:
         count = 0
         with self.torch.no_grad():
             for observations, _condition in loader:
+                observations = observations.to(self._model_device, non_blocking=True)
                 noise = self.torch.randn_like(observations)
                 t = self.torch.randint(
                     0,
@@ -163,6 +166,7 @@ class ValueEpochTrainer:
         self.torch = torch_backend
         self.functional = functional_backend
         self.ema = ema
+        self._model_device = next(model.parameters()).device  # type: ignore[union-attr]
 
     def _compute_target(self, observations: object) -> object:
         """Compute distance-to-goal target from the trajectory's final state."""
@@ -174,6 +178,7 @@ class ValueEpochTrainer:
         total = 0.0
         count = 0
         for observations, _condition in loader:
+            observations = observations.to(self._model_device, non_blocking=True)
             if observations.shape[1] < 1:
                 continue
             target = self._compute_target(observations)
@@ -197,6 +202,7 @@ class ValueEpochTrainer:
         count = 0
         with self.torch.no_grad():
             for observations, _condition in loader:
+                observations = observations.to(self._model_device, non_blocking=True)
                 if observations.shape[1] < 1:
                     continue
                 target = self._compute_target(observations)
@@ -291,12 +297,15 @@ class DiffusionTrainingPipeline:
         """Execute training and return saved checkpoint paths."""
         return self._run_impl()
 
-    def _run_impl(self) -> list[Path]:
+    def _run_impl(self) -> list[Path]:  # noqa: C901
         cfg = self.cfg
 
         if cfg.seed is not None:
             torch.manual_seed(cfg.seed)
             np.random.seed(cfg.seed)
+
+        training_device = _resolve_training_device(cfg.device)
+        print(f"[info] Training device: {training_device}")
 
         summary_writer = _create_summary_writer(cfg.tensorboard_log_dir)
 
@@ -365,7 +374,7 @@ class DiffusionTrainingPipeline:
         )
 
         normalizer = DiffusionTrainingConfig._derive_normalizer(trajectories)
-        tensor_factory = TorchTensorFactory(normalizer, device="cpu")
+        tensor_factory = TorchTensorFactory(normalizer)
         obs_t, cond_t = tensor_factory.to_torch_tensors(trajectories)
         dataset_tensors = torch.utils.data.TensorDataset(obs_t, cond_t)
         train_loader, val_loader = _build_dataloaders(
@@ -385,7 +394,7 @@ class DiffusionTrainingPipeline:
             horizon=config.horizon,
             n_diffusion_steps=config.n_diffusion_steps,
             dim=config.n_hidden,
-        )
+        ).to(training_device)
         # Cosine noise schedule (Nichol & Dhariwal 2021) as used in the paper.
         schedule = DiffusionSchedule.cosine(n_diffusion_steps=config.n_diffusion_steps)
         diffusion_optimizer = torch.optim.AdamW(
@@ -480,7 +489,7 @@ class DiffusionTrainingPipeline:
             state_dim=config.state_dim,
             horizon=config.horizon,
             dim=config.n_hidden,
-        )
+        ).to(training_device)
         value_optimizer = torch.optim.AdamW(value_model.parameters(), lr=config.learning_rate)
         value_ema = EMAAccumulator(value_model)
         value_epoch_trainer = ValueEpochTrainer(
@@ -832,6 +841,36 @@ def _coerce_latest_checkpoint_every(latest_checkpoint_every: int) -> int:
     if latest_checkpoint_every < 0:
         raise ValueError("latest_checkpoint_every must be >= 0.")
     return int(latest_checkpoint_every)
+
+
+def _resolve_training_device(requested: str | None) -> torch.device:
+    raw = "auto" if requested is None else str(requested).strip()
+    if raw == "" or raw.lower() == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        return torch.device("cpu")
+
+    try:
+        device = torch.device(raw)
+    except (TypeError, RuntimeError) as exc:
+        raise ValueError(
+            f"Invalid device {requested!r}. Use one of: auto, cpu, cuda, cuda:<index>."
+        ) from exc
+
+    if device.type == "cuda":
+        if not torch.cuda.is_available():
+            raise ValueError(
+                "CUDA was requested but torch.cuda.is_available() is False. "
+                "Install a CUDA-enabled PyTorch build or choose --device cpu."
+            )
+        if device.index is not None:
+            device_count = torch.cuda.device_count()
+            if device.index < 0 or device.index >= device_count:
+                raise ValueError(
+                    f"Requested CUDA device index {device.index} is out of range "
+                    f"(available count: {device_count})."
+                )
+    return device
 
 
 def _should_save_latest(

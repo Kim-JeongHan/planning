@@ -59,6 +59,10 @@ def test_train_arg_resolver_parses_advanced_flags() -> None:
             "2",
             "--best-top-k",
             "2",
+            "--n-hidden",
+            "64",
+            "--device",
+            "cuda:0",
         ]
     ).resolve()
 
@@ -69,3 +73,62 @@ def test_train_arg_resolver_parses_advanced_flags() -> None:
     assert values["checkpoint_every"] == 3
     assert values["keep_last_checkpoints"] == 2
     assert values["best_top_k"] == 2
+    assert values["n_hidden"] == 64
+    assert values["device"] == "cuda:0"
+
+
+def test_resolve_training_device_auto_falls_back_to_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
+    from planning.diffusion.training import trainer
+
+    monkeypatch.setattr(trainer.torch.cuda, "is_available", lambda: False)
+    resolved = trainer._resolve_training_device("auto")
+
+    assert resolved.type == "cpu"
+
+
+def test_resolve_training_device_rejects_cuda_when_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planning.diffusion.training import trainer
+
+    monkeypatch.setattr(trainer.torch.cuda, "is_available", lambda: False)
+
+    with pytest.raises(ValueError, match="CUDA was requested"):
+        trainer._resolve_training_device("cuda")
+
+
+def test_training_pipeline_uses_cpu_tensor_factory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("torch")
+    from planning.diffusion.training import trainer
+
+    dataset = np.random.RandomState(0).randn(16, 5, 3)
+    dataset_path = tmp_path / "toy.npz"
+    np.savez(dataset_path, observations=dataset)
+
+    base_factory = trainer.TorchTensorFactory
+    call_count = {"init": 0}
+
+    class CpuOnlyFactory:
+        def __init__(self, normalizer: object) -> None:
+            call_count["init"] += 1
+            self._inner = base_factory(normalizer)
+
+        def to_torch_tensors(self, trajectories: np.ndarray) -> tuple[object, object]:
+            return self._inner.to_torch_tensors(trajectories)
+
+    monkeypatch.setattr(trainer, "TorchTensorFactory", CpuOnlyFactory)
+
+    trainer.DiffusionTrainingPipeline(
+        dataset=str(dataset_path),
+        output_root=str(tmp_path / "logs"),
+        horizon=5,
+        state_dim=3,
+        n_diffusion_steps=16,
+        epochs=1,
+        batch_size=4,
+        train_value=False,
+    ).run()
+
+    assert call_count["init"] == 1
