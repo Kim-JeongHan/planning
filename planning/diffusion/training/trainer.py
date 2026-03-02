@@ -178,9 +178,7 @@ class DiffusionTrainingPipeline:
         cfg = self.cfg
 
         trajectory_config = cfg.to_trajectory_config()
-        horizon = trajectory_config.horizon
-        if horizon is None:
-            raise ValueError("horizon must be provided in training config.")
+        horizon = cfg.horizon
 
         source = TrajectoryDataSetSource(trajectory_config)
         trajectories = source.to_trajectories()

@@ -78,3 +78,26 @@ def test_checkpoint_manager_accepts_absolute_checkpoint_path(tmp_path: Path) -> 
 
     manager = CheckpointManager.for_loading(str(root))
     assert manager.root == root
+
+
+def test_model_state_dict_supports_pytorch_standard_kwargs() -> None:
+    pytest.importorskip("torch")
+
+    from planning.diffusion.model import DiffusionModel, ValueModel
+
+    diffusion_model = DiffusionModel(state_dim=3, horizon=4, n_diffusion_steps=8, dim=32)
+    value_model = ValueModel(state_dim=3, horizon=4, dim=32)
+
+    destination: dict[str, object] = {}
+    diffusion_state = diffusion_model.state_dict(destination=destination, prefix="diffusion.")
+    assert diffusion_state is destination
+    assert any(key.startswith("diffusion.") for key in diffusion_state)
+
+    value_state = value_model.state_dict(prefix="value.", keep_vars=False)
+    assert any(key.startswith("value.") for key in value_state)
+
+    incompatible = diffusion_model.load_state_dict(diffusion_model.state_dict(), strict=True)
+    assert hasattr(incompatible, "missing_keys")
+    assert hasattr(incompatible, "unexpected_keys")
+    assert incompatible.missing_keys == []
+    assert incompatible.unexpected_keys == []

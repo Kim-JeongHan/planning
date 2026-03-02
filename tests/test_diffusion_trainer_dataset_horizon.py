@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
 
 def _pipeline_kwargs(dataset_path: Path, output_path: Path) -> dict[str, object]:
@@ -21,7 +22,7 @@ def _pipeline_kwargs(dataset_path: Path, output_path: Path) -> dict[str, object]
     }
 
 
-def test_load_and_prepare_dataset_requires_horizon(tmp_path: Path) -> None:
+def test_training_pipeline_requires_integer_horizon(tmp_path: Path) -> None:
     pytest.importorskip("torch")
     from planning.diffusion.training.trainer import DiffusionTrainingPipeline
 
@@ -29,10 +30,8 @@ def test_load_and_prepare_dataset_requires_horizon(tmp_path: Path) -> None:
     dataset_path = tmp_path / "toy.npz"
     np.savez(dataset_path, observations=dataset)
 
-    pipeline = DiffusionTrainingPipeline(
-        **_pipeline_kwargs(dataset_path, tmp_path / "logs"),
-        horizon=None,
-    )
-
-    with pytest.raises(ValueError, match="horizon must be provided"):
-        pipeline._load_and_prepare_dataset()
+    with pytest.raises(ValidationError):
+        DiffusionTrainingPipeline(
+            **_pipeline_kwargs(dataset_path, tmp_path / "logs"),
+            horizon=None,
+        )

@@ -28,6 +28,7 @@ from .training.noise import DiffusionSchedule
 
 # Inpainting conditions map ``{timestep_index: state_vector}``.
 InpaintingConditions = Mapping[int, torch.Tensor]
+_GOAL_KEYS = ("goal", "target", "end", "final", "pose")
 
 
 class ConditionAdapter:
@@ -87,7 +88,7 @@ class ConditionAdapter:
         goal = torch.zeros((state_dim,), dtype=dtype, device=device)
         if not conditions:
             return goal
-        for key in ("goal", "target", "end", "final", "pose"):
+        for key in _GOAL_KEYS:
             candidate = conditions.get(key)
             if candidate is None:
                 continue
@@ -343,7 +344,7 @@ class DiffusionSamplingEngine:
 
             # --- Guided sampling (Algorithm 1, lines 7-8) ---
             if guide_policy is not None and step >= t_stopgrad:
-                guidance_sum = torch.zeros_like(mu)
+                guidance_scale = scale * (sigma**2 if scale_grad_by_std else sigma)
                 for _guide_step in range(max(1, n_guide_steps)):
                     g = guide_policy(mu, t_index, condition)
                     if not torch.is_tensor(g):
@@ -352,12 +353,9 @@ class DiffusionSamplingEngine:
                     if g.shape != mu.shape:
                         continue
                     if torch.isfinite(g).all():
-                        guidance_sum = guidance_sum + g
-                grad = guidance_sum / max(1.0, float(n_guide_steps))
-
-                # Scale: alpha * sigma^2 * grad  (Equation 3 in paper)
-                guidance_scale = scale * (sigma**2 if scale_grad_by_std else sigma)
-                mu = mu + guidance_scale * grad
+                        # Apply guidance update at each guide step so n_guide_steps
+                        # materially changes the reverse-process trajectory.
+                        mu = mu + guidance_scale * g
 
             # --- Sample τ^{i-1} ~ N(μ, Σ^i) ---
             noise = (
@@ -478,6 +476,23 @@ class GuidedPolicy:
                     continue
                 norm_cond[timestep] = self.normalizer.normalize_tensor(
                     inpaint_value.unsqueeze(0)
+                ).squeeze(0)
+            elif isinstance(k, str) and k in _GOAL_KEYS:
+                # Keep goal-style condition keys in the same normalized space
+                # as inpainting conditions to avoid mixed-space guidance.
+                try:
+                    goal_value = ConditionAdapter._to_tensor_vector(
+                        v,
+                        device=self._device,
+                        dtype=torch.float32,
+                    )
+                except (TypeError, ValueError, RuntimeError):
+                    norm_cond[k] = v
+                    continue
+                if goal_value.numel() == 0:
+                    continue
+                norm_cond[k] = self.normalizer.normalize_tensor(
+                    goal_value[: self.state_dim].unsqueeze(0)
                 ).squeeze(0)
             else:
                 norm_cond[k] = v

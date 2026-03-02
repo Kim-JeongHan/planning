@@ -89,12 +89,12 @@ class DiffusionArtifactLoader:
         self,
         checkpoint_manager: CheckpointManager,
         *,
-        seed: int,
-        device: torch.device,
+        seed: int = 42,
+        device: torch.device | str = "cpu",
     ) -> None:
         self.checkpoint_manager = checkpoint_manager
-        self.seed = seed
-        self._device = device
+        self.seed = int(seed)
+        self._device = torch.device(device)
 
     def resolve(self, epoch: str | int) -> Path:
         return self.checkpoint_manager.resolve(epoch)

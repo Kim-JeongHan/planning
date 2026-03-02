@@ -8,6 +8,7 @@ import torch
 from planning.diffusion.core import PlannerStateNormalizer
 from planning.diffusion.sampling import (
     DiffusionSamplingEngine,
+    GuidancePolicy,
     GuidedPolicy,
     ValueGuide,
 )
@@ -117,3 +118,83 @@ def test_guided_policy_default_uses_engine_sampler() -> None:
     result = policy({}, batch_size=2)
     assert hasattr(result, "observations")
     assert result.observations.shape == (2, policy.horizon, policy.state_dim)
+
+
+def test_engine_n_guide_steps_changes_guided_result() -> None:
+    schedule = DiffusionSchedule.linear(n_diffusion_steps=6)
+    dummy = _DummyModel()
+
+    class _ConstantGuide(GuidancePolicy):
+        def __init__(self) -> None:
+            super().__init__(model=None, device=_CPU)
+
+        def __call__(
+            self,
+            x: torch.Tensor,
+            t: torch.Tensor,
+            condition: dict[object, object] | None = None,
+        ) -> torch.Tensor:
+            del t, condition
+            return torch.full_like(x, 0.25)
+
+    sample_once = DiffusionSamplingEngine(schedule, seed=123).sample(
+        model=dummy,
+        device=_CPU,
+        sample_shape=(2, 5, 3),
+        schedule=schedule,
+        guide=_ConstantGuide(),
+        condition=None,
+        n_guide_steps=1,
+        t_stopgrad=0,
+        scale=0.3,
+    )
+    sample_many = DiffusionSamplingEngine(schedule, seed=123).sample(
+        model=dummy,
+        device=_CPU,
+        sample_shape=(2, 5, 3),
+        schedule=schedule,
+        guide=_ConstantGuide(),
+        condition=None,
+        n_guide_steps=5,
+        t_stopgrad=0,
+        scale=0.3,
+    )
+
+    assert sample_once.shape == sample_many.shape
+    assert not np.allclose(sample_once, sample_many)
+
+
+def test_guided_policy_normalizes_goal_alias_conditions() -> None:
+    schedule = DiffusionSchedule.linear(n_diffusion_steps=4)
+    normalizer = PlannerStateNormalizer(
+        mean=torch.tensor([5.0, 5.0, 5.0]),
+        std=torch.tensor([2.0, 2.0, 2.0]),
+    )
+    dummy = _DummyModel()
+    captured: dict[str, object] = {}
+
+    def _sample_fn(model: object, **kwargs: object) -> np.ndarray:
+        del model
+        captured["condition"] = kwargs.get("condition")
+        return np.zeros((1, dummy.horizon, dummy.state_dim), dtype=float)
+
+    policy = GuidedPolicy(
+        guide=ValueGuide(model=dummy, device=_CPU),
+        scale=0.1,
+        diffusion_model=dummy,
+        normalizer=normalizer,
+        preprocess_fns=[],
+        sample_fn=_sample_fn,
+        device=_CPU,
+    )
+    policy.schedule = schedule
+
+    policy({0: np.array([7.0, 7.0, 7.0]), "goal": np.array([9.0, 9.0, 9.0])}, batch_size=1)
+    condition = captured["condition"]
+    assert isinstance(condition, dict)
+    start = condition[0]
+    goal = condition["goal"]
+    assert torch.is_tensor(start)
+    assert torch.is_tensor(goal)
+    assert torch.allclose(start, torch.tensor([1.0, 1.0, 1.0], dtype=torch.float32))
+    assert torch.allclose(goal, torch.tensor([2.0, 2.0, 2.0], dtype=torch.float32))

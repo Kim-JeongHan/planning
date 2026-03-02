@@ -188,6 +188,29 @@ class CheckpointLoader:
             return self._select_best_checkpoint_by_loss(candidates)
         return None
 
+    @staticmethod
+    def _parse_epoch_string(value: str) -> int | None:
+        try:
+            return int(value)
+        except ValueError:
+            return None
+
+    def _resolve_string_checkpoint(
+        self, root: Path, requested: str, candidates: list[tuple[int, Path]]
+    ) -> Path | None:
+        by_name = self._resolve_named_checkpoint(root, requested, candidates)
+        if by_name is not None:
+            return by_name
+        requested_epoch = self._parse_epoch_string(requested)
+        if requested_epoch is not None:
+            by_epoch = self._resolve_checkpoint_by_epoch(root, requested_epoch, candidates)
+            if by_epoch is not None:
+                return by_epoch
+        direct = root / requested
+        if direct.exists():
+            return direct
+        return None
+
     def _resolve_checkpoint_by_epoch(
         self, root: Path, target_epoch: int, candidates: list[tuple[int, Path]]
     ) -> Path | None:
@@ -226,12 +249,9 @@ class CheckpointLoader:
         if isinstance(epoch, str):
             requested = epoch.strip().lower()
             if requested:
-                by_name = self._resolve_named_checkpoint(root, requested, candidates)
-                if by_name is not None:
-                    return by_name
-                direct = root / requested
-                if direct.exists():
-                    return direct
+                by_requested = self._resolve_string_checkpoint(root, requested, candidates)
+                if by_requested is not None:
+                    return by_requested
         elif isinstance(epoch, int):
             by_epoch = self._resolve_checkpoint_by_epoch(root, epoch, candidates)
             if by_epoch is not None:
