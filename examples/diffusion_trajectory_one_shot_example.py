@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import argparse
 import time
+from collections.abc import Sequence
 from pathlib import Path
+from typing import cast
 
 import numpy as np
+import torch
 import viser
-import yaml
+import yaml  # type: ignore[import-untyped]
 from pydantic import BaseModel, ValidationError, field_validator
 
 from planning.collision import BoundedCollisionChecker, ObstacleCollisionChecker
@@ -22,7 +25,6 @@ from planning.visualization import save_docs_image, setup_camera_top_view
 
 DEFAULT_RUN_CONFIG_PATH = "config/diffusion_trajectory_one_shot.yaml"
 DEFAULT_DOCS_IMAGE = "diffusion_trajectory_one_shot_example.png"
-
 
 
 class EnvironmentConfig(BaseModel):
@@ -43,9 +45,9 @@ class EnvironmentConfig(BaseModel):
         """Validate obstacle color as an RGB tuple."""
         if isinstance(value, str):
             raise ValueError("obstacle_color must be an iterable of 3 values")
-        if not hasattr(value, "__len__"):
+        if not isinstance(value, Sequence | np.ndarray):
             raise ValueError("obstacle_color must be an iterable of 3 values")
-        if len(value) != 3:  # type: ignore[arg-type]
+        if len(value) != 3:
             raise ValueError("obstacle_color must have exactly 3 values")
         return int(value[0]), int(value[1]), int(value[2])
 
@@ -144,7 +146,7 @@ def main(
     print("=== Diffusion one-shot trajectory generation example ===")
 
     map_env = Map(size=environment.map_size, z_range=environment.z_range)
-    bounds = np.asarray(map_env.get_bounds(), dtype=float)
+    bounds = tuple(tuple(float(value) for value in axis) for axis in map_env.get_bounds())
     server = None
     if not headless:
         server = viser.ViserServer()
@@ -182,8 +184,8 @@ def main(
     diffusion_experiment = diffusion_loader.load(diffusion_config.diffusion_epoch)
     value_experiment = value_loader.load(diffusion_config.value_epoch)
     check_compatibility(diffusion_experiment, value_experiment)
-    diffusion_experiment.ema.to(diffusion_config.device)
-    value_experiment.ema.to(diffusion_config.device)
+    cast(torch.nn.Module, diffusion_experiment.ema).to(diffusion_config.device)
+    cast(torch.nn.Module, value_experiment.ema).to(diffusion_config.device)
     guide = ValueGuide(model=value_experiment.ema, verbose=False)
     policy = GuidedPolicy(
         guide=guide,
@@ -198,7 +200,7 @@ def main(
     )
     # Fix start *and* goal via inpainting: {timestep_index: state_array}.
     # GuidedPolicy normalizes these to model space before denoising.
-    conditions = {0: start_state, policy.horizon - 1: goal_state}
+    conditions: dict[object, object] = {0: start_state, policy.horizon - 1: goal_state}
 
     print(f"Sampling trajectories with batch size {diffusion_config.sample_batch_size}...")
     sampling_start_time = time.perf_counter()
@@ -229,8 +231,10 @@ def main(
             axis=1,
         )
         endpoint_ok = int(
-            ((start_dist <= config.rollout.endpoint_tolerance) &
-             (goal_dist <= config.rollout.endpoint_tolerance)).sum()
+            (
+                (start_dist <= config.rollout.endpoint_tolerance)
+                & (goal_dist <= config.rollout.endpoint_tolerance)
+            ).sum()
         )
         print(
             f"No valid path. best start dist={start_dist.min():.3f}, "
@@ -243,9 +247,7 @@ def main(
         return None
 
     print(f"Selected trajectory shape: {selected_trajectory.shape}")
-    print(
-        f"Selected trajectory first/last: {selected_trajectory[0]} -> {selected_trajectory[-1]}"
-    )
+    print(f"Selected trajectory first/last: {selected_trajectory[0]} -> {selected_trajectory[-1]}")
 
     if server is not None:
         _visualize_selected_trajectory(

@@ -117,15 +117,24 @@ class TorchTensorFactory:
             return self.normalizer.normalize_tensor(flat).reshape(conditions.shape[0], -1)
         return conditions
 
-    def to_torch_tensors(self, trajectories: torch.Tensor | np.ndarray) -> tuple[object, object]:
+    def to_torch_tensors(
+        self, trajectories: torch.Tensor | np.ndarray
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Convert arrays to torch tensors for training."""
         if self.device is None:
-            if torch.is_tensor(trajectories):
+            if isinstance(trajectories, torch.Tensor):
                 trajectories_t = trajectories.to(torch.float32)
             else:
                 trajectories_t = torch.as_tensor(trajectories, dtype=torch.float32)
         else:
-            trajectories_t = torch.as_tensor(trajectories, dtype=torch.float32, device=self.device)
+            if isinstance(trajectories, torch.Tensor):
+                trajectories_t = trajectories.to(device=self.device, dtype=torch.float32)
+            else:
+                trajectories_t = torch.as_tensor(
+                    trajectories,
+                    dtype=torch.float32,
+                    device=self.device,
+                )
         normalized = self.normalizer.normalize_tensor(trajectories_t)
         cond = self._normalize_condition(trajectories_t)
         obs_t = normalized.to(torch.float32)

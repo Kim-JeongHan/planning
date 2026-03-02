@@ -20,5 +20,6 @@ def main(cfg: DictConfig) -> None:
     for path in ckpts:
         print(f"- {path}")
 
+
 if __name__ == "__main__":
     raise SystemExit(main())

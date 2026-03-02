@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import importlib
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import torch  # type: ignore
 
@@ -12,7 +14,7 @@ from .core import DiffusionDataset, DiffusionExperiment, PlannerStateNormalizer
 from .training.checkpoint import CheckpointManager
 
 
-def _load_model_from_payload(payload: dict[str, object], expected: str) -> object:
+def _load_model_from_payload(payload: dict[str, object], expected: str) -> torch.nn.Module:
     return ModelLoader(expected).load(payload)
 
 
@@ -30,9 +32,10 @@ class ModelLoader:
 
     @staticmethod
     def _extract_descriptor(payload: dict[str, object]) -> _ResolvedModelDescriptor:
-        model_class_path = payload.get("model_class_path", "")
-        if not model_class_path:
+        model_class_path_raw = payload.get("model_class_path", "")
+        if not isinstance(model_class_path_raw, str) or not model_class_path_raw:
             raise ValueError("Checkpoint missing 'model_class_path'")
+        model_class_path = model_class_path_raw
         module_path, _, class_name = model_class_path.rpartition(".")
         if not module_path:
             raise ValueError("Invalid model_class_path in checkpoint payload.")
@@ -41,32 +44,37 @@ class ModelLoader:
     def _resolve_module(self, module_path: str) -> object:
         return importlib.import_module(module_path)
 
-    def _load_model_cls(
+    def _load_model(
         self, payload: dict[str, object], descriptor: _ResolvedModelDescriptor
-    ) -> object:
+    ) -> torch.nn.Module:
         module = self._resolve_module(descriptor.module_path)
-        model_kwargs = payload.get("model_kwargs", {})
+        model_kwargs_raw = payload.get("model_kwargs", {})
+        if not isinstance(model_kwargs_raw, Mapping):
+            raise ValueError("Checkpoint has invalid 'model_kwargs'.")
+        model_kwargs = dict(model_kwargs_raw)
         model_cls = getattr(module, descriptor.class_name)
-        return model_cls(**model_kwargs)  # type: ignore[misc]
+        model_ctor = cast(Callable[..., object], model_cls)
+        model = model_ctor(**model_kwargs)
+        if not isinstance(model, torch.nn.Module):
+            raise TypeError("Loaded model class must be a torch.nn.Module instance.")
+        return model
 
     @staticmethod
-    def _load_state_dict(payload: dict[str, object]) -> object:
+    def _load_state_dict(payload: dict[str, object]) -> dict[str, torch.Tensor]:
         state = payload.get("ema_state_dict") or payload.get("model_state_dict")
         if state is None:
             state = payload.get("state_dict")
-        if not state:
+        if not isinstance(state, Mapping):
             raise ValueError("Checkpoint missing model state dict")
-        return state
+        return cast(dict[str, torch.Tensor], dict(state))
 
-    def load(self, payload: dict[str, object]) -> object:
+    def load(self, payload: dict[str, object]) -> torch.nn.Module:
         descriptor = self._extract_descriptor(payload)
-        model = self._load_model_cls(payload, descriptor)
+        model = self._load_model(payload, descriptor)
         state = self._load_state_dict(payload)
-        missing, unexpected = model.load_state_dict(state, strict=False)  # type: ignore[arg-type]
+        missing, unexpected = model.load_state_dict(state, strict=False)
         if missing:
-            raise ValueError(
-                f"Checkpoint has missing keys for {self.expected} model: {missing}"
-            )
+            raise ValueError(f"Checkpoint has missing keys for {self.expected} model: {missing}")
         if unexpected:
             # Incompatible but still usable for strict local workflows.
             pass
@@ -90,13 +98,16 @@ class DiffusionArtifactLoader:
         if self.seed is not None:
             torch.manual_seed(self.seed)
 
-        meta = dict(payload.get("meta", {}))
+        meta_payload = payload.get("meta", {})
+        meta = dict(meta_payload) if isinstance(meta_payload, Mapping) else {}
         meta["path"] = str(checkpoint_file)
         normalizer_payload = payload.get("normalizer")
         if normalizer_payload is None:
             state_dim = int(meta.get("state_dim", 3))
             normalizer = PlannerStateNormalizer.identity(state_dim)
         else:
+            if not isinstance(normalizer_payload, dict):
+                raise ValueError("Checkpoint normalizer payload must be a dict.")
             normalizer = PlannerStateNormalizer.from_dict(normalizer_payload)
 
         horizon = int(meta.get("horizon", 64))
@@ -106,9 +117,11 @@ class DiffusionArtifactLoader:
         model.horizon = int(getattr(model, "horizon", horizon))
         model.state_dim = int(getattr(model, "state_dim", state_dim))
         if self.seed is not None and hasattr(model, "set_seed"):
-            model.set_seed(self.seed)
-        if hasattr(model, "meta"):
-            merged_meta = dict(model.meta)
+            set_seed = cast(Callable[[int], None], model.set_seed)
+            set_seed(self.seed)
+        existing_meta = getattr(model, "meta", None)
+        if isinstance(existing_meta, Mapping):
+            merged_meta = dict(existing_meta)
             merged_meta.update(meta)
             model.meta = merged_meta
         else:
@@ -157,13 +170,10 @@ class Config:
         if not module_path:
             raise ValueError(f"Invalid class path: {class_path!r}")
 
-        if (
-            "." not in module_path
-            and (
-                module_path.startswith("sampling")
-                or module_path.startswith("utils")
-                or module_path.startswith("training")
-            )
+        if "." not in module_path and (
+            module_path.startswith("sampling")
+            or module_path.startswith("utils")
+            or module_path.startswith("training")
         ):
             module_path = f"planning.diffusion.{module_path}"
 

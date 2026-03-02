@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 import pytest
 
 from planning.diffusion.config import DiffusionTrainingConfig
+from planning.diffusion.core import PlannerStateNormalizer
 
 
 def test_training_smoke(tmp_path: Path) -> None:
@@ -46,9 +48,7 @@ def test_training_package_exports_pipeline() -> None:
 def test_hydra_cli_overrides() -> None:
     from hydra import compose, initialize
 
-    with initialize(
-        config_path="../config", version_base=None
-    ):
+    with initialize(config_path="../config", version_base=None):
         cfg = compose(
             config_name="diffusion_3d_training",
             overrides=[
@@ -94,7 +94,7 @@ def test_training_pipeline_uses_cpu_tensor_factory(
     class CpuOnlyFactory:
         def __init__(self, normalizer: object) -> None:
             call_count["init"] += 1
-            self._inner = base_factory(normalizer)
+            self._inner = base_factory(cast(PlannerStateNormalizer, normalizer))
 
         def to_torch_tensors(self, trajectories: np.ndarray) -> tuple[object, object]:
             return self._inner.to_torch_tensors(trajectories)
@@ -108,9 +108,7 @@ def test_training_pipeline_uses_cpu_tensor_factory(
         stage_calls["count"] += 1
         return []
 
-    monkeypatch.setattr(
-        trainer.DiffusionTrainingPipeline, "_run_stage", fake_run_stage
-    )
+    monkeypatch.setattr(trainer.DiffusionTrainingPipeline, "_run_stage", fake_run_stage)
 
     trainer.DiffusionTrainingPipeline(
         dataset=str(dataset_path),
@@ -178,7 +176,7 @@ def test_manage_stage_checkpoints_skips_ema_snapshot_when_nothing_is_saved(tmp_p
         min_delta=0.0,
         log_every=1,
         config=object(),
-        normalizer=object(),
+        normalizer=PlannerStateNormalizer.identity(3),
         checkpoint_manager=manager,
         train_loader=object(),
         val_loader=None,
@@ -271,7 +269,7 @@ def test_manage_stage_checkpoints_reuses_single_ema_snapshot_when_writing(tmp_pa
         min_delta=0.0,
         log_every=1,
         config=config,
-        normalizer=object(),
+        normalizer=PlannerStateNormalizer.identity(3),
         checkpoint_manager=manager,
         train_loader=object(),
         val_loader=None,
@@ -303,7 +301,9 @@ def test_manage_stage_checkpoints_reuses_single_ema_snapshot_when_writing(tmp_pa
 def test_diffusion_epoch_trainer_avoids_loss_item_calls_per_batch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    torch = pytest.importorskip("torch")
+    pytest.importorskip("torch")
+    import torch
+
     from planning.diffusion.training.noise import DiffusionSchedule
     from planning.diffusion.training.trainer import DiffusionEpochTrainer
 
@@ -312,19 +312,19 @@ def test_diffusion_epoch_trainer_avoids_loss_item_calls_per_batch(
             super().__init__()
             self.scale = torch.nn.Parameter(torch.tensor(1.0))
 
-        def forward(self, noisy: object, t: object) -> object:
+        def forward(self, noisy: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
             del t
             return noisy * self.scale
 
     class LossProxy:
-        def __init__(self, tensor: object, counter: dict[str, int]) -> None:
+        def __init__(self, tensor: Any, counter: dict[str, int]) -> None:
             self._tensor = tensor
             self._counter = counter
 
         def backward(self) -> None:
             self._tensor.backward()
 
-        def detach(self) -> object:
+        def detach(self) -> Any:
             return self._tensor.detach()
 
         def item(self) -> float:
@@ -334,7 +334,7 @@ def test_diffusion_epoch_trainer_avoids_loss_item_calls_per_batch(
     original_mse_loss = torch.nn.functional.mse_loss
     item_counter = {"item_calls": 0}
 
-    def mse_loss_proxy(predicted: object, target: object) -> LossProxy:
+    def mse_loss_proxy(predicted: torch.Tensor, target: torch.Tensor) -> LossProxy:
         tensor = original_mse_loss(predicted, target)
         return LossProxy(tensor, item_counter)
 

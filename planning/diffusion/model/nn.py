@@ -19,6 +19,7 @@ import torch.nn.functional as F  # noqa: N812
 # Time-step embedding
 # ---------------------------------------------------------------------------
 
+
 class SinusoidalPosEmb(nn.Module):
     """Sinusoidal position embedding for diffusion timesteps (Vaswani et al.)."""
 
@@ -30,7 +31,9 @@ class SinusoidalPosEmb(nn.Module):
         # t: [B] integer timesteps
         half = self.dim // 2
         freqs = torch.exp(
-            -math.log(10000) * torch.arange(half, device=t.device, dtype=torch.float32) / max(half - 1, 1)
+            -math.log(10000)
+            * torch.arange(half, device=t.device, dtype=torch.float32)
+            / max(half - 1, 1)
         )
         args = t.float()[:, None] * freqs[None, :]  # [B, half]
         return torch.cat([args.sin(), args.cos()], dim=-1)  # [B, dim]
@@ -39,6 +42,7 @@ class SinusoidalPosEmb(nn.Module):
 # ---------------------------------------------------------------------------
 # Building blocks
 # ---------------------------------------------------------------------------
+
 
 class Conv1dBlock(nn.Module):
     """Conv1d → GroupNorm → SiLU building block."""
@@ -129,6 +133,7 @@ class Upsample1d(nn.Module):
 # Temporal U-Net (diffusion denoiser)
 # ---------------------------------------------------------------------------
 
+
 class TemporalUnet(nn.Module):
     """Temporal U-Net for trajectory denoising.
 
@@ -210,7 +215,7 @@ class TemporalUnet(nn.Module):
         """Pad sequence length to the nearest multiple of 2^n_downs."""
         if self._n_downs == 0:
             return x, 0
-        divisor = 2 ** self._n_downs
+        divisor = 2**self._n_downs
         h = x.shape[-1]
         pad = (-h) % divisor  # smallest non-negative pad to reach a multiple
         if pad > 0:
@@ -257,6 +262,7 @@ class TemporalUnet(nn.Module):
 # ---------------------------------------------------------------------------
 # Temporal value network (encoder-only U-Net → scalar)
 # ---------------------------------------------------------------------------
+
 
 class TemporalValueNet(nn.Module):
     """Trajectory value estimator based on the temporal U-Net encoder.
@@ -324,7 +330,7 @@ class TemporalValueNet(nn.Module):
     def _pad_to_multiple(self, x: torch.Tensor) -> tuple[torch.Tensor, int]:
         if self._n_downs == 0:
             return x, 0
-        divisor = 2 ** self._n_downs
+        divisor = 2**self._n_downs
         h = x.shape[-1]
         pad = (-h) % divisor
         if pad > 0:

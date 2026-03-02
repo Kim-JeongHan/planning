@@ -2,7 +2,19 @@
 
 from __future__ import annotations
 
+from typing import Protocol
+
 import numpy as np
+
+
+class PolicyCallable(Protocol):
+    def __call__(
+        self,
+        conditions: dict[int | str, np.ndarray],
+        *,
+        batch_size: int,
+        verbose: bool,
+    ) -> object: ...
 
 
 def extract_trajectory_observations(result: object) -> np.ndarray:
@@ -26,7 +38,7 @@ def extract_trajectory_observations(result: object) -> np.ndarray:
 
 
 def sample_trajectory_batch(
-    policy: object,
+    policy: PolicyCallable,
     condition: np.ndarray,
     sample_batch_size: int,
     condition_key: int | str = 0,
@@ -42,7 +54,11 @@ def sample_trajectory_batch(
     Returns:
         Observations with shape [batch, horizon, state_dim].
     """
-    result = policy({condition_key: condition}, batch_size=sample_batch_size, verbose=False)
+    result = policy(
+        {condition_key: condition},
+        batch_size=sample_batch_size,
+        verbose=False,
+    )
     observations = extract_trajectory_observations(result)
     if observations.ndim != 3:
         raise ValueError("Policy output must be [batch, horizon, state_dim].")

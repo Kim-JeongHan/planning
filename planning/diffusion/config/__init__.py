@@ -6,8 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, field_validator, model_validator
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-PROJECT_CONFIG_DIR = PROJECT_ROOT / "config"
+from ...path import PROJECT_CONFIG_DIR, PROJECT_ROOT
 
 
 class DiffusionBaseConfig(BaseModel):
@@ -38,10 +37,12 @@ class DiffusionInferenceConfig(DiffusionBaseConfig):
     def value_checkpoint_path(self) -> str:
         return str(Path(self.checkpoint_path) / "value.pt")
 
+
 class TrajectoryConfig(BaseModel):
     """Dataset loading configuration for trajectory preprocessing."""
 
     dataset: str
+    horizon: int | None = None
     state_dim: int
     device: str
     seed: int

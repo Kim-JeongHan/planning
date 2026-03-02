@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import contextlib
+from collections.abc import Iterable
 
 import torch  # type: ignore
 import torch.nn.functional as functional  # type: ignore
 
+from ..core import PlannerStateNormalizer
 from .noise import DiffusionSchedule
+
+BatchLoader = Iterable[tuple[torch.Tensor, object]]
 
 
 class EMAAccumulator:
@@ -20,27 +24,23 @@ class EMAAccumulator:
     ``decay`` of 0.995 follows the default in the Janner et al. diffuser repo.
     """
 
-    def __init__(self, model: object, decay: float = 0.995) -> None:
+    def __init__(self, model: torch.nn.Module, decay: float = 0.995) -> None:
         self.model = model
         self.decay = float(decay)
         # Clone current parameters into shadow.
         self.shadow: dict[str, torch.Tensor] = {
-            name: param.data.clone()
-            for name, param in model.named_parameters()  # type: ignore[union-attr]
+            name: param.data.clone() for name, param in model.named_parameters()
         }
 
     def update(self) -> None:
         """Blend current model weights into the EMA shadow copy."""
         with torch.no_grad():
-            for name, param in self.model.named_parameters():  # type: ignore[union-attr]
+            for name, param in self.model.named_parameters():
                 self.shadow[name].mul_(self.decay).add_(param.data, alpha=1.0 - self.decay)
 
     def state_dict(self) -> dict[str, object]:
         """Return the EMA shadow weights (used for ``ema_state_dict`` in checkpoints)."""
-        state = {
-            name: tensor.clone()
-            for name, tensor in self.model.state_dict().items()  # type: ignore[union-attr]
-        }
+        state = {name: tensor.clone() for name, tensor in self.model.state_dict().items()}
         for name, tensor in self.shadow.items():
             state[name] = tensor.clone()
         return state
@@ -55,8 +55,8 @@ class BaseEpochTrainer:
 
     def __init__(
         self,
-        model: object,
-        optimizer: object,
+        model: torch.nn.Module,
+        optimizer: torch.optim.Optimizer,
         ema: EMAAccumulator | None,
         model_device: torch.device,
     ) -> None:
@@ -72,11 +72,11 @@ class BaseEpochTrainer:
         """Return False to skip this batch."""
         return True
 
-    def _run_loop(self, loader: object, *, training: bool) -> float:
+    def _run_loop(self, loader: BatchLoader, *, training: bool) -> float:
         if training:
-            self.model.train()  # type: ignore[union-attr]
+            self.model.train()
         else:
-            self.model.eval()  # type: ignore[union-attr]
+            self.model.eval()
 
         total: torch.Tensor | None = None
         count = 0
@@ -88,22 +88,22 @@ class BaseEpochTrainer:
                     continue
                 loss = self._compute_loss(observations)
                 if training:
-                    self.optimizer.zero_grad(set_to_none=True)  # type: ignore[union-attr]
+                    self.optimizer.zero_grad(set_to_none=True)
                     loss.backward()
-                    self.optimizer.step()  # type: ignore[union-attr]
+                    self.optimizer.step()
                     if self.ema is not None:
                         self.ema.update()
                 total = loss.detach() if total is None else total + loss.detach()
                 count += 1
 
         if training:
-            self.model.train()  # type: ignore[union-attr]
+            self.model.train()
         return float((total / count).item()) if count > 0 and total is not None else 0.0
 
-    def train_epoch(self, loader: object) -> float:
+    def train_epoch(self, loader: BatchLoader) -> float:
         return self._run_loop(loader, training=True)
 
-    def evaluate_epoch(self, loader: object) -> float:
+    def evaluate_epoch(self, loader: BatchLoader) -> float:
         return self._run_loop(loader, training=False)
 
 
@@ -118,8 +118,8 @@ class DiffusionEpochTrainer(BaseEpochTrainer):
 
     def __init__(
         self,
-        model: object,
-        optimizer: object,
+        model: torch.nn.Module,
+        optimizer: torch.optim.Optimizer,
         schedule: DiffusionSchedule,
         ema: EMAAccumulator | None = None,
     ) -> None:
@@ -127,7 +127,7 @@ class DiffusionEpochTrainer(BaseEpochTrainer):
             model=model,
             optimizer=optimizer,
             ema=ema,
-            model_device=next(model.parameters()).device,  # type: ignore[union-attr]
+            model_device=next(model.parameters()).device,
         )
         self.schedule = schedule
         self._alpha_bar = torch.as_tensor(schedule.alpha_bar, dtype=torch.float32)
@@ -143,7 +143,7 @@ class DiffusionEpochTrainer(BaseEpochTrainer):
         alpha_bar = self._alpha_bar.to(device=observations.device, dtype=observations.dtype)[t]
         alpha_bar = alpha_bar.view(-1, *([1] * (observations.ndim - 1)))
         noisy = torch.sqrt(alpha_bar) * observations + torch.sqrt(1.0 - alpha_bar) * noise
-        eps_pred = self.model(noisy, t)  # type: ignore[union-attr]
+        eps_pred = self.model(noisy, t)
         return functional.mse_loss(eps_pred, noise)
 
 
@@ -158,16 +158,16 @@ class ValueEpochTrainer(BaseEpochTrainer):
 
     def __init__(
         self,
-        model: object,
-        optimizer: object,
-        normalizer: object,
+        model: torch.nn.Module,
+        optimizer: torch.optim.Optimizer,
+        normalizer: PlannerStateNormalizer,
         ema: EMAAccumulator | None = None,
     ) -> None:
         super().__init__(
             model=model,
             optimizer=optimizer,
             ema=ema,
-            model_device=next(model.parameters()).device,  # type: ignore[union-attr]
+            model_device=next(model.parameters()).device,
         )
         self.normalizer = normalizer
 
@@ -178,6 +178,6 @@ class ValueEpochTrainer(BaseEpochTrainer):
         goal = observations[:, -1, :]  # [B, D]
         distances = torch.norm(observations - goal[:, None, :], dim=-1)  # [B, H]
         target = torch.log1p(distances.mean(dim=1, keepdim=True))  # [B, 1]
-        pred = self.model(observations)  # type: ignore[union-attr]
+        pred = self.model(observations)
         target = target.to(dtype=pred.dtype, device=pred.device)
         return functional.mse_loss(pred, target)

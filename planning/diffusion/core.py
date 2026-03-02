@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from types import SimpleNamespace
+from typing import cast
 
 import numpy as np
 import torch  # type: ignore
@@ -18,6 +18,16 @@ def _as_float_vector(
     if tensor.ndim != 1:
         raise ValueError(f"{name} must be a 1-D vector, got shape {tuple(tensor.shape)!r}")
     return tensor
+
+
+def _coerce_float(value: object, *, name: str) -> float:
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, int | float | np.integer | np.floating):
+        return float(value)
+    if isinstance(value, str):
+        return float(value)
+    raise TypeError(f"{name} must be numeric, got {type(value).__name__}")
 
 
 @dataclass(frozen=True)
@@ -53,10 +63,20 @@ class PlannerStateNormalizer:
     def from_dict(cls, payload: dict[str, object] | None) -> PlannerStateNormalizer:
         if not payload:
             raise ValueError("normalizer payload must be a non-empty dict")
-        mean = _as_float_vector(payload["mean"], name="normalizer.mean")
-        std = _as_float_vector(payload["std"], name="normalizer.std")
-        clip_min = float(payload.get("clip_min", -5.0))
-        clip_max = float(payload.get("clip_max", 5.0))
+        mean_raw = payload.get("mean")
+        std_raw = payload.get("std")
+        if mean_raw is None or std_raw is None:
+            raise ValueError("normalizer payload must contain both 'mean' and 'std'.")
+        mean = _as_float_vector(
+            cast(torch.Tensor | np.ndarray | list[float] | tuple[float, ...], mean_raw),
+            name="normalizer.mean",
+        )
+        std = _as_float_vector(
+            cast(torch.Tensor | np.ndarray | list[float] | tuple[float, ...], std_raw),
+            name="normalizer.std",
+        )
+        clip_min = _coerce_float(payload.get("clip_min", -5.0), name="normalizer.clip_min")
+        clip_max = _coerce_float(payload.get("clip_max", 5.0), name="normalizer.clip_max")
         return cls(mean=mean, std=std, clip_min=clip_min, clip_max=clip_max)
 
     def to_dict(self) -> dict[str, object]:
@@ -116,4 +136,5 @@ class DiffusionExperiment:
 
     @property
     def path(self) -> str | None:
-        return self.meta.get("path") if isinstance(self.meta, dict) else None
+        raw_path = self.meta.get("path") if isinstance(self.meta, dict) else None
+        return raw_path if isinstance(raw_path, str) else None

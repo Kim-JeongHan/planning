@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import re
+from collections.abc import Mapping
 from math import isfinite
 from pathlib import Path
+from typing import cast
 
 import torch  # type: ignore
 
@@ -41,6 +42,10 @@ class CheckpointManager:
     def checkpoint_root(self, kind: str) -> Path:
         if kind not in {"diffusion", "value"}:
             raise ValueError("kind must be one of: diffusion, value.")
+        if self.config.horizon is None:
+            raise ValueError("CheckpointConfig.horizon must be set.")
+        if self.config.n_diffusion_steps is None:
+            raise ValueError("CheckpointConfig.n_diffusion_steps must be set.")
         horizon = int(self.config.horizon)
         n_steps = int(self.config.n_diffusion_steps)
         if kind == "diffusion":
@@ -76,7 +81,7 @@ class CheckpointManager:
         self,
         path: str | Path,
         *,
-        model: object,
+        model: torch.nn.Module,
         normalizer: PlannerStateNormalizer,
         meta: dict[str, object],
         model_kind: str,
@@ -97,7 +102,10 @@ class CheckpointLoader:
 
     def __init__(self, manager: CheckpointManager) -> None:
         self.manager = manager
-        self.checkpoint_path = str(manager.config.checkpoint_path)
+        configured_path = manager.config.checkpoint_path
+        if configured_path is None:
+            configured_path = manager.config.root
+        self.checkpoint_path = str(configured_path)
         self.device = str(manager.config.device)
 
     def _extract_checkpoint_epoch(self, path: Path) -> int | None:
@@ -124,40 +132,15 @@ class CheckpointLoader:
                 epochs.append((epoch, path))
         return sorted(epochs, key=lambda item: item[0])
 
-    def _resolve_checkpoint_fallback(
-        self, root: Path, candidates: list[tuple[int, Path]]
-    ) -> Path | None:
-        candidates_only = [path for _, path in candidates]
-        if candidates_only:
-            return candidates_only[-1]
-
-        checkpoint_json = root / "checkpoint.json"
-        if not checkpoint_json.exists():
-            return None
-        payload = json.loads(checkpoint_json.read_text(encoding="utf-8"))
-        latest = payload.get("latest_checkpoint")
-        if not latest:
-            return None
-        explicit = root / latest
-        if explicit.exists():
-            return explicit
-        return None
-
-    def _coerce_epoch_value(self, value: str | int) -> int | None:
-        if isinstance(value, int):
-            return int(value)
-        normalized = value.strip().lower()
-        try:
-            return int(normalized)
-        except ValueError:
-            return None
-
     def _load_checkpoint_payload(self, file_path: Path) -> dict[str, object]:
         if file_path.suffix.lower() in {".pt", ".ckpt"}:
             try:
-                return torch.load(file_path, map_location=self.device)
+                payload = torch.load(file_path, map_location=self.device)
             except Exception as exc:
                 raise RuntimeError(f"Failed to load torch checkpoint: {file_path}") from exc
+            if not isinstance(payload, dict):
+                raise RuntimeError(f"Checkpoint payload must be a dict: {file_path}")
+            return cast(dict[str, object], payload)
         raise ValueError(f"Unsupported checkpoint format: {file_path.suffix}")
 
     def _select_best_checkpoint_by_loss(self, candidates: list[tuple[int, Path]]) -> Path | None:
@@ -170,7 +153,11 @@ class CheckpointLoader:
             except (RuntimeError, ValueError):
                 continue
             meta = payload.get("meta", {})
+            if not isinstance(meta, Mapping):
+                continue
             raw_loss = meta.get("loss")
+            if raw_loss is None:
+                continue
             try:
                 loss_value = float(raw_loss)
             except (TypeError, ValueError):
@@ -245,15 +232,10 @@ class CheckpointLoader:
                 direct = root / requested
                 if direct.exists():
                     return direct
-        target_epoch = self._coerce_epoch_value(epoch)
-        if target_epoch is not None:
-            by_epoch = self._resolve_checkpoint_by_epoch(root, target_epoch, candidates)
+        elif isinstance(epoch, int):
+            by_epoch = self._resolve_checkpoint_by_epoch(root, epoch, candidates)
             if by_epoch is not None:
                 return by_epoch
-
-        fallback = self._resolve_checkpoint_fallback(root, candidates)
-        if fallback is not None:
-            return fallback
 
         if not candidates:
             raise FileNotFoundError(f"No checkpoints found in {root}")
@@ -276,30 +258,66 @@ class CheckpointWriter:
     def __init__(self, path_manager: CheckpointManager) -> None:
         self.path_manager = path_manager
 
+    @staticmethod
+    def _coerce_int(value: object, fallback: int) -> int:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                return int(fallback)
+        return int(fallback)
+
+    @staticmethod
+    def _coerce_dim_mults(value: object, fallback: list[int]) -> list[int]:
+        if isinstance(value, list | tuple):
+            output: list[int] = []
+            for item in value:
+                try:
+                    output.append(int(item))
+                except (TypeError, ValueError):
+                    continue
+            if output:
+                return output
+        return list(fallback)
+
     def _build_payload(
         self,
-        model: object,
+        model: torch.nn.Module,
         normalizer: PlannerStateNormalizer,
         meta: dict[str, object],
         model_kind: str,
         ema_state_dict: dict[str, object] | None = None,
     ) -> dict[str, object]:
-        hparams = getattr(model, "hparams", {})
-        model_state = model.state_dict()  # type: ignore[union-attr]
+        raw_hparams = getattr(model, "hparams", {})
+        hparams = raw_hparams if isinstance(raw_hparams, Mapping) else {}
+        model_state = dict(model.state_dict())
+        state_dim = self._coerce_int(meta.get("state_dim", getattr(model, "state_dim", 3)), 3)
+        horizon = self._coerce_int(meta.get("horizon", getattr(model, "horizon", 3)), 3)
+        n_steps = self._coerce_int(
+            meta.get("n_diffusion_steps", getattr(model, "n_diffusion_steps", 100)),
+            100,
+        )
+        dim = self._coerce_int(hparams.get("dim", getattr(model, "dim", 32)), 32)
+        dim_mults = self._coerce_dim_mults(
+            hparams.get("dim_mults", getattr(model, "dim_mults", [1, 2, 4, 8])),
+            [1, 2, 4, 8],
+        )
         return {
             "model_class_path": hparams.get(
                 "model_class_path", model.__class__.__module__ + "." + model.__class__.__name__
             ),
             "model_kwargs": {
-                "state_dim": int(meta.get("state_dim", getattr(model, "state_dim", 3))),
-                "horizon": int(meta.get("horizon", getattr(model, "horizon", 3))),
-                "n_diffusion_steps": int(
-                    meta.get("n_diffusion_steps", getattr(model, "n_diffusion_steps", 100))
-                ),
-                "dim": int(hparams.get("dim", getattr(model, "dim", 32))),
-                "dim_mults": list(
-                    hparams.get("dim_mults", getattr(model, "dim_mults", [1, 2, 4, 8]))
-                ),
+                "state_dim": state_dim,
+                "horizon": horizon,
+                "n_diffusion_steps": n_steps,
+                "dim": dim,
+                "dim_mults": dim_mults,
             },
             "normalizer": normalizer.to_dict(),
             "meta": dict(meta),
@@ -313,7 +331,7 @@ class CheckpointWriter:
         self,
         path: str | Path,
         *,
-        model: object,
+        model: torch.nn.Module,
         normalizer: PlannerStateNormalizer,
         meta: dict[str, object],
         model_kind: str,
@@ -323,6 +341,7 @@ class CheckpointWriter:
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
         payload = self._build_payload(model, normalizer, meta, model_kind, ema_state_dict)
-        payload["meta"]["kind"] = model_kind
+        payload_meta = cast(dict[str, object], payload["meta"])
+        payload_meta["kind"] = model_kind
         torch.save(payload, file_path)
         return file_path

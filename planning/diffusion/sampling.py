@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from types import SimpleNamespace
+from typing import cast
 
 import numpy as np
 import torch
@@ -69,7 +70,7 @@ class ConditionAdapter:
             return {}
         result: dict[int, np.ndarray] = {}
         for key, value in conditions.items():
-            if not isinstance(key, (int, np.integer)):
+            if not isinstance(key, int | np.integer):
                 continue
             arr = np.asarray(value, dtype=float).ravel()
             result[int(key)] = arr[:state_dim]
@@ -82,11 +83,11 @@ class ConditionAdapter:
             return np.zeros((state_dim,), dtype=float)
         for key in ("goal", "target", "end", "final", "pose"):
             candidate = conditions.get(key)
-            if isinstance(candidate, (list, tuple, np.ndarray)):
+            if isinstance(candidate, list | tuple | np.ndarray):
                 arr = np.asarray(candidate, dtype=float)
                 return arr[:state_dim]
         last = list(conditions.values())[-1]
-        if isinstance(last, (list, tuple, np.ndarray)):
+        if isinstance(last, list | tuple | np.ndarray):
             arr = np.asarray(last, dtype=float)
             return arr[:state_dim]
         return np.zeros((state_dim,), dtype=float)
@@ -95,6 +96,7 @@ class ConditionAdapter:
 # ---------------------------------------------------------------------------
 # Model predictor (wraps the torch model for numpy-based sampling loops)
 # ---------------------------------------------------------------------------
+
 
 class ModelPredictor:
     """Tiny adapter for model inference during sampling."""
@@ -114,13 +116,17 @@ class ModelPredictor:
             return np.zeros_like(x)
 
         if hasattr(self.model, "predict_numpy"):
-            return np.asarray(self.model.predict_numpy(x, t), dtype=float)
+            predict_numpy = cast(
+                Callable[[np.ndarray, np.ndarray], np.ndarray], self.model.predict_numpy
+            )
+            return np.asarray(predict_numpy(x, t), dtype=float)
 
         if hasattr(self.model, "forward"):
             with torch.no_grad():
                 x_t = torch.as_tensor(x, dtype=torch.float32, device=self.device)
                 t_t = torch.as_tensor(t, dtype=torch.long, device=self.device)
-                eps = self.model(x_t, t_t)
+                model_fn = cast(Callable[[torch.Tensor, torch.Tensor], torch.Tensor], self.model)
+                eps = model_fn(x_t, t_t)
                 return np.asarray(eps.detach().cpu().numpy(), dtype=float)
 
         return np.zeros_like(x, dtype=float)
@@ -129,6 +135,7 @@ class ModelPredictor:
 # ---------------------------------------------------------------------------
 # Guidance policy (computes ∇J for a value model)
 # ---------------------------------------------------------------------------
+
 
 class GuidancePolicy:
     """Compute gradient-based guidance from a differentiable value model.
@@ -181,9 +188,7 @@ class GuidancePolicy:
             return None
         if x.ndim != 3:
             return None
-        x_t = torch.as_tensor(x, dtype=torch.float32, device=self._device).requires_grad_(
-            True
-        )
+        x_t = torch.as_tensor(x, dtype=torch.float32, device=self._device).requires_grad_(True)
         try:
             with torch.enable_grad():
                 value = self.model(x_t)
@@ -203,6 +208,7 @@ class GuidancePolicy:
 # ---------------------------------------------------------------------------
 # Core reverse-diffusion loop (Algorithm 1)
 # ---------------------------------------------------------------------------
+
 
 class DiffusionSamplingEngine:
     """Reverse diffusion with optional guidance and inpainting conditioning.
@@ -242,7 +248,7 @@ class DiffusionSamplingEngine:
         model: object,
         *,
         sample_shape: tuple[int, int, int],
-        guide: object | None = None,
+        guide: GuidancePolicy | None = None,
         schedule: DiffusionSchedule | None = None,
         condition: dict[object, object] | None = None,
         n_guide_steps: int = 2,
@@ -251,15 +257,15 @@ class DiffusionSamplingEngine:
         scale_grad_by_std: bool = True,
         scale: float = 0.1,
         seed: int | None = None,
-        **_: object,
+        **_kwargs: object,
     ) -> np.ndarray:
         if seed is not None:
             self.rng = np.random.default_rng(seed)
 
         active_schedule = self.schedule if schedule is None else schedule
-        batch, _, state_dim = sample_shape
+        batch, _horizon, state_dim = sample_shape
         predictor = ModelPredictor(model=model)
-        guide_policy: GuidancePolicy | None = guide if guide is not None else None
+        guide_policy = guide
 
         # Build inpainting dict from conditions.
         inpaint = ConditionAdapter.to_inpainting(condition, state_dim)
@@ -288,7 +294,7 @@ class DiffusionSamplingEngine:
             # --- Guided sampling (Algorithm 1, lines 7-8) ---
             if guide_policy is not None and step >= t_stopgrad:
                 guidance_sum = np.zeros_like(mu)
-                for _ in range(max(1, n_guide_steps)):
+                for _guide_step in range(max(1, n_guide_steps)):
                     g = guide_policy(mu, t_index, condition)
                     if np.isfinite(g).all():
                         guidance_sum = guidance_sum + g
@@ -312,6 +318,7 @@ class DiffusionSamplingEngine:
 # Value guide wrapper
 # ---------------------------------------------------------------------------
 
+
 class ValueGuide(GuidancePolicy):
     """GuidancePolicy subclass used as the default guide for GuidedPolicy.
 
@@ -326,6 +333,7 @@ class ValueGuide(GuidancePolicy):
 # ---------------------------------------------------------------------------
 # High-level policy
 # ---------------------------------------------------------------------------
+
 
 class GuidedPolicy:
     """Produces full trajectory batches via guided reverse diffusion.
@@ -342,8 +350,9 @@ class GuidedPolicy:
         scale: float,
         diffusion_model: object,
         normalizer: PlannerStateNormalizer,
-        preprocess_fns: list[Callable[[dict[object, object] | None], dict[object, object]]]
-        | None = None,
+        preprocess_fns: (
+            list[Callable[[dict[object, object] | None], dict[object, object]]] | None
+        ) = None,
         sample_fn: Callable[..., np.ndarray] | None = None,
         n_guide_steps: int = 2,
         t_stopgrad: int = 2,
@@ -370,9 +379,7 @@ class GuidedPolicy:
         self._engine = DiffusionSamplingEngine(self.schedule)
         self.sample_fn = sample_fn if sample_fn is not None else self._engine.sample
 
-    def _prepare_conditions(
-        self, conditions: dict[object, object] | None
-    ) -> dict[object, object]:
+    def _prepare_conditions(self, conditions: dict[object, object] | None) -> dict[object, object]:
         prepared = conditions or {}
         for fn in self.preprocess_fns:
             prepared = fn(prepared)  # type: ignore[assignment]
@@ -390,7 +397,7 @@ class GuidedPolicy:
         # normalized space the diffusion model was trained on.
         norm_cond: dict[object, object] = {}
         for k, v in prepared.items():
-            if isinstance(k, (int, np.integer)):
+            if isinstance(k, int | np.integer):
                 arr = np.asarray(v, dtype=float).reshape(1, -1)
                 norm_cond[k] = self.normalizer.normalize(arr)[0]
             else:

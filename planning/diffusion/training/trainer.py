@@ -5,8 +5,10 @@ from __future__ import annotations
 import contextlib
 import logging
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Protocol, cast
 
 import numpy as np
 import torch  # type: ignore
@@ -29,20 +31,21 @@ _LOGGER = logging.getLogger(__name__)
 # Stage parameter bundle
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class _StageParams:
     phase: str
     epoch_trainer: object
     model: object
     optimizer: object
-    ema: EMAAccumulator
+    ema: object
     effective_epochs: int
     patience: int | None
     min_delta: float
     log_every: int
-    config: DiffusionTrainingConfig
-    normalizer: object
-    checkpoint_manager: CheckpointManager
+    config: object
+    normalizer: PlannerStateNormalizer
+    checkpoint_manager: object
     train_loader: object
     val_loader: object | None
     summary_writer: object | None
@@ -52,9 +55,24 @@ class _StageParams:
     extra_meta: dict[str, object] | None = field(default=None)
 
 
+class _SupportsAddText(Protocol):
+    def add_text(self, tag: str, text: str, global_step: int) -> object: ...
+
+
+class _SupportsEpochCalls(Protocol):
+    def train_epoch(self, loader: object) -> float: ...
+
+    def evaluate_epoch(self, loader: object) -> float: ...
+
+
+class _SupportsStateDict(Protocol):
+    def state_dict(self) -> dict[str, object]: ...
+
+
 # ---------------------------------------------------------------------------
 # Loss tracker with early-stop support
 # ---------------------------------------------------------------------------
+
 
 class EpochLossTracker:
     """Track running and best loss statistics with early-stop counters."""
@@ -89,6 +107,7 @@ class EpochLossTracker:
 # ---------------------------------------------------------------------------
 # Main pipeline
 # ---------------------------------------------------------------------------
+
 
 class DiffusionTrainingPipeline:
     """Orchestrator for diffusion/value training workflow."""
@@ -203,7 +222,9 @@ class DiffusionTrainingPipeline:
                 None,
             )
 
-        generator = torch.Generator().manual_seed(self.cfg.seed) if self.cfg.seed is not None else None
+        generator = (
+            torch.Generator().manual_seed(self.cfg.seed) if self.cfg.seed is not None else None
+        )
         train_subset, val_subset = torch.utils.data.random_split(
             dataset_tensors,
             [dataset_size - num_val, num_val],
@@ -214,9 +235,7 @@ class DiffusionTrainingPipeline:
             torch.utils.data.DataLoader(val_subset, batch_size=config.batch_size, shuffle=False),
         )
 
-    def _build_checkpoint_manager(
-        self, config: DiffusionTrainingConfig
-    ) -> CheckpointManager:
+    def _build_checkpoint_manager(self, config: DiffusionTrainingConfig) -> CheckpointManager:
         checkpoint_config = config.to_checkpoint_config()
         return CheckpointManager(checkpoint_config)
 
@@ -232,7 +251,7 @@ class DiffusionTrainingPipeline:
         patience: int | None,
         min_delta: float,
         config: DiffusionTrainingConfig,
-        normalizer: object,
+        normalizer: PlannerStateNormalizer,
         train_loader: object,
         val_loader: object | None,
         checkpoint_manager: CheckpointManager,
@@ -294,16 +313,27 @@ class DiffusionTrainingPipeline:
         min_delta = float(config.diffusion_min_delta)
         _LOGGER.info(
             "LR schedule: %s (lr=%.4g, step_size=%d, gamma=%.3g, lr_min=%.4g)",
-            config.lr_schedule, config.learning_rate, config.lr_step_size,
-            config.lr_gamma, config.lr_min,
+            config.lr_schedule,
+            config.learning_rate,
+            config.lr_step_size,
+            config.lr_gamma,
+            config.lr_min,
         )
         params = self._build_common_stage_params(
             phase="diffusion",
-            model=model, epoch_trainer=epoch_trainer, optimizer=optimizer, ema=ema,
-            effective_epochs=effective_epochs, patience=patience, min_delta=min_delta,
-            config=config, normalizer=normalizer,
-            train_loader=train_loader, val_loader=val_loader,
-            checkpoint_manager=checkpoint_manager, summary_writer=summary_writer,
+            model=model,
+            epoch_trainer=epoch_trainer,
+            optimizer=optimizer,
+            ema=ema,
+            effective_epochs=effective_epochs,
+            patience=patience,
+            min_delta=min_delta,
+            config=config,
+            normalizer=normalizer,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            checkpoint_manager=checkpoint_manager,
+            summary_writer=summary_writer,
         )
         return self._run_stage(params)
 
@@ -340,21 +370,31 @@ class DiffusionTrainingPipeline:
         min_delta = float(config.value_min_delta)
         params = self._build_common_stage_params(
             phase="value",
-            model=model, epoch_trainer=epoch_trainer, optimizer=optimizer, ema=ema,
-            effective_epochs=effective_epochs, patience=patience, min_delta=min_delta,
-            config=config, normalizer=normalizer,
-            train_loader=train_loader, val_loader=val_loader,
-            checkpoint_manager=checkpoint_manager, summary_writer=summary_writer,
+            model=model,
+            epoch_trainer=epoch_trainer,
+            optimizer=optimizer,
+            ema=ema,
+            effective_epochs=effective_epochs,
+            patience=patience,
+            min_delta=min_delta,
+            config=config,
+            normalizer=normalizer,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            checkpoint_manager=checkpoint_manager,
+            summary_writer=summary_writer,
             extra_meta={"discount": config.discount},
         )
         return self._run_stage(params)
 
     def _run_stage(self, p: _StageParams) -> list[Path]:
+        config = cast(DiffusionTrainingConfig, p.config)
+        checkpoint_manager = cast(CheckpointManager, p.checkpoint_manager)
         ckpts: list[Path] = []
         tracker = EpochLossTracker(min_delta=p.min_delta, patience=p.patience)
         recent_ckpts: deque[Path] = deque()
-        latest_ckpt = p.checkpoint_manager.latest(p.phase)
-        best_ckpt = p.checkpoint_manager.best(p.phase)
+        latest_ckpt = checkpoint_manager.latest(p.phase)
+        best_ckpt = checkpoint_manager.best(p.phase)
         bar = tqdm(
             range(1, p.effective_epochs + 1),
             desc=f"{p.phase.title()} training",
@@ -363,13 +403,13 @@ class DiffusionTrainingPipeline:
 
         for epoch in bar:
             current_lr = _learning_rate_for_epoch(
-                p.config.learning_rate,
-                p.config.lr_schedule,
+                config.learning_rate,
+                config.lr_schedule,
                 epoch,
                 total_epochs=p.effective_epochs,
-                step_size=p.config.lr_step_size,
-                gamma=p.config.lr_gamma,
-                lr_min=p.config.lr_min,
+                step_size=config.lr_step_size,
+                gamma=config.lr_gamma,
+                lr_min=config.lr_min,
             )
             _set_learning_rate(p.optimizer, current_lr)
             train_loss, val_loss, metric_loss = _run_epoch_with_validation(
@@ -393,9 +433,14 @@ class DiffusionTrainingPipeline:
                 )
                 _LOGGER.info(
                     "[%s] epoch %d/%d  train=%.6f  val=%s  lr=%.6f  Δ=%s%s%s",
-                    p.phase, epoch, p.effective_epochs, train_loss,
+                    p.phase,
+                    epoch,
+                    p.effective_epochs,
+                    train_loss,
                     "n/a" if val_loss is None else f"{val_loss:.6f}",
-                    current_lr, delta, best_label,
+                    current_lr,
+                    delta,
+                    best_label,
                     " [new best]" if is_new_best else "",
                 )
             _log_scalar(p.summary_writer, f"{p.phase}/loss", train_loss, epoch)
@@ -419,9 +464,11 @@ class DiffusionTrainingPipeline:
 
             if tracker.should_stop():
                 _LOGGER.info(
-                    "[early-stop][%s] Stopping at epoch %d/%d "
-                    "(no improvement for %d epochs).",
-                    p.phase, epoch, p.effective_epochs, tracker.no_improve,
+                    "[early-stop][%s] Stopping at epoch %d/%d " "(no improvement for %d epochs).",
+                    p.phase,
+                    epoch,
+                    p.effective_epochs,
+                    tracker.no_improve,
                 )
                 break
 
@@ -439,6 +486,7 @@ class DiffusionTrainingPipeline:
 # Module-level helpers
 # ---------------------------------------------------------------------------
 
+
 def _log_every(epochs: int, target_ticks: int = 20) -> int:
     if epochs <= 1:
         return 1
@@ -452,12 +500,15 @@ def _coerce_log_every(epochs: int, log_every: int | None) -> int:
 
 
 def _log_scalar(writer: object | None, tag: str, value: float, step: int) -> None:
-    if writer is not None:
-        writer.add_scalar(tag, float(value), step)  # type: ignore[union-attr]
+    if writer is None or not hasattr(writer, "add_scalar"):
+        return
+    add_scalar = cast(Callable[[str, float, int], object], writer.add_scalar)
+    add_scalar(tag, float(value), step)
 
 
 def _log_config_summary(writer: object, config: DiffusionTrainingConfig) -> None:
-    writer.add_text(  # type: ignore[union-attr]
+    writer_with_text = cast(_SupportsAddText, writer)
+    writer_with_text.add_text(
         "training/config",
         (
             f"dataset={config.dataset}\n"
@@ -508,7 +559,9 @@ def _learning_rate_for_epoch(
 
 
 def _set_learning_rate(optimizer: object, lr: float) -> None:
-    for group in optimizer.param_groups:  # type: ignore[union-attr]
+    if not isinstance(optimizer, torch.optim.Optimizer):
+        return
+    for group in optimizer.param_groups:
         group["lr"] = lr
 
 
@@ -559,9 +612,10 @@ def _run_epoch_with_validation(
     train_loader: object,
     val_loader: object | None,
 ) -> tuple[float, float | None, float]:
-    train_loss = trainer.train_epoch(train_loader)  # type: ignore[union-attr]
-    val_loss = trainer.evaluate_epoch(val_loader) if val_loader is not None else None  # type: ignore[union-attr]
-    metric_loss = val_loss if val_loader is not None else train_loss
+    trainer_impl = cast(_SupportsEpochCalls, trainer)
+    train_loss = trainer_impl.train_epoch(train_loader)
+    val_loss = trainer_impl.evaluate_epoch(val_loader) if val_loader is not None else None
+    metric_loss = val_loss if val_loss is not None else train_loss
     return train_loss, val_loss, metric_loss
 
 
@@ -577,22 +631,25 @@ def _manage_stage_checkpoints(
     latest_ckpt: Path,
     best_ckpt: Path,
 ) -> None:
+    manager = cast(CheckpointManager, p.checkpoint_manager)
+    config = cast(DiffusionTrainingConfig, p.config)
     ema_sd: dict[str, object] | None = None
 
     def _ema_state_dict() -> dict[str, object]:
         nonlocal ema_sd
         if ema_sd is None:
-            ema_sd = p.ema.state_dict()
+            ema_obj = cast(_SupportsStateDict, p.ema)
+            ema_sd = ema_obj.state_dict()
         return ema_sd
 
     if p.checkpoint_every > 0 and epoch % p.checkpoint_every == 0:
-        periodic = p.checkpoint_manager.checkpoint_path(p.phase, epoch)
-        p.checkpoint_manager.save(
+        periodic = manager.checkpoint_path(p.phase, epoch)
+        manager.save(
             periodic,
-            model=p.model,
+            model=cast(torch.nn.Module, p.model),
             normalizer=p.normalizer,
             meta=_build_checkpoint_meta(
-                config=p.config,
+                config=config,
                 epoch=epoch,
                 loss=train_loss,
                 extra=p.extra_meta,
@@ -611,12 +668,12 @@ def _manage_stage_checkpoints(
         checkpoint_every=p.checkpoint_every,
         latest_checkpoint_every=p.latest_checkpoint_every,
     ):
-        p.checkpoint_manager.save(
+        manager.save(
             latest_ckpt,
-            model=p.model,
+            model=cast(torch.nn.Module, p.model),
             normalizer=p.normalizer,
             meta=_build_checkpoint_meta(
-                config=p.config,
+                config=config,
                 epoch=epoch,
                 loss=metric_loss,
                 extra=p.extra_meta,
@@ -628,15 +685,15 @@ def _manage_stage_checkpoints(
 
     if is_new_best:
         best_meta = _build_checkpoint_meta(
-            config=p.config,
+            config=config,
             epoch=epoch,
             loss=metric_loss,
             extra=p.extra_meta,
         )
         best_meta["is_best"] = True
-        p.checkpoint_manager.save(
+        manager.save(
             best_ckpt,
-            model=p.model,
+            model=cast(torch.nn.Module, p.model),
             normalizer=p.normalizer,
             meta=best_meta,
             model_kind=p.phase,
@@ -647,9 +704,9 @@ def _manage_stage_checkpoints(
         output_path = getattr(p.config, "output_path", None)
         if output_path:
             phase_alias = Path(str(output_path)) / f"{p.phase}.pt"
-            p.checkpoint_manager.save(
+            manager.save(
                 phase_alias,
-                model=p.model,
+                model=cast(torch.nn.Module, p.model),
                 normalizer=p.normalizer,
                 meta=best_meta,
                 model_kind=p.phase,

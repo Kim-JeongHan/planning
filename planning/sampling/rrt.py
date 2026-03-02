@@ -549,9 +549,7 @@ class RRTStar(RRGBase):
 
                 best_cost = min_cost_node.cost + min_cost_node.distance_to(new_node)
                 new_node.change_parent(min_cost_node, best_cost)
-                self.graph.add_edge(
-                    min_cost_node, new_node, min_cost_node.distance_to(new_node)
-                )
+                self.graph.add_edge(min_cost_node, new_node, min_cost_node.distance_to(new_node))
 
                 self._rewire_neighbors(new_node, neighbor_nodes)
 
@@ -739,9 +737,7 @@ class InformedRRTStar(RRTStar):
 
                 best_cost = min_cost_node.cost + min_cost_node.distance_to(new_node)
                 new_node.change_parent(min_cost_node, best_cost)
-                self.graph.add_edge(
-                    min_cost_node, new_node, min_cost_node.distance_to(new_node)
-                )
+                self.graph.add_edge(min_cost_node, new_node, min_cost_node.distance_to(new_node))
 
                 # Rewire neighbors to use new_node if it provides a better path
                 self._rewire_neighbors(new_node, neighbor_nodes)
