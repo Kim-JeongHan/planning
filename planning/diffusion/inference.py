@@ -13,7 +13,6 @@ class PolicyCallable(Protocol):
         conditions: dict[int | str, np.ndarray],
         *,
         batch_size: int,
-        verbose: bool,
     ) -> object: ...
 
 
@@ -57,7 +56,6 @@ def sample_trajectory_batch(
     result = policy(
         {condition_key: condition},
         batch_size=sample_batch_size,
-        verbose=False,
     )
     observations = extract_trajectory_observations(result)
     if observations.ndim != 3:

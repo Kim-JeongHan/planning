@@ -174,19 +174,21 @@ def main(
             diffusion_config.diffusion_checkpoint_path, device=diffusion_config.device
         ),
         seed=diffusion_config.seed,
+        device=diffusion_config.device,
     )
     value_loader = DiffusionArtifactLoader(
         CheckpointManager.for_loading(
             diffusion_config.value_checkpoint_path, device=diffusion_config.device
         ),
         seed=diffusion_config.seed,
+        device=diffusion_config.device,
     )
     diffusion_experiment = diffusion_loader.load(diffusion_config.diffusion_epoch)
     value_experiment = value_loader.load(diffusion_config.value_epoch)
     check_compatibility(diffusion_experiment, value_experiment)
     cast(torch.nn.Module, diffusion_experiment.ema).to(diffusion_config.device)
     cast(torch.nn.Module, value_experiment.ema).to(diffusion_config.device)
-    guide = ValueGuide(model=value_experiment.ema, verbose=False)
+    guide = ValueGuide(model=value_experiment.ema, device=diffusion_config.device)
     policy = GuidedPolicy(
         guide=guide,
         scale=diffusion_config.scale,
@@ -196,7 +198,7 @@ def main(
         n_guide_steps=diffusion_config.n_guide_steps,
         t_stopgrad=2,
         scale_grad_by_std=True,
-        verbose=False,
+        device=diffusion_config.device,
     )
     # Fix start *and* goal via inpainting: {timestep_index: state_array}.
     # GuidedPolicy normalizes these to model space before denoising.
@@ -204,7 +206,7 @@ def main(
 
     print(f"Sampling trajectories with batch size {diffusion_config.sample_batch_size}...")
     sampling_start_time = time.perf_counter()
-    result = policy(conditions, batch_size=config.diffusion.sample_batch_size, verbose=False)
+    result = policy(conditions, batch_size=config.diffusion.sample_batch_size)
     sampling_time = time.perf_counter() - sampling_start_time
     print(f"Sampling took {sampling_time:.2f} seconds.")
     print(f"Sampled {len(result.observations)} trajectories, checking constraints...")

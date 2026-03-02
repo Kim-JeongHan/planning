@@ -85,9 +85,16 @@ class ModelLoader:
 class DiffusionArtifactLoader:
     """Load checkpoints into DiffusionExperiment objects."""
 
-    def __init__(self, checkpoint_manager: CheckpointManager, *, seed: int | None = None) -> None:
+    def __init__(
+        self,
+        checkpoint_manager: CheckpointManager,
+        *,
+        seed: int,
+        device: torch.device,
+    ) -> None:
         self.checkpoint_manager = checkpoint_manager
         self.seed = seed
+        self._device = device
 
     def resolve(self, epoch: str | int) -> Path:
         return self.checkpoint_manager.resolve(epoch)
@@ -95,8 +102,7 @@ class DiffusionArtifactLoader:
     def load(self, epoch: str | int = "latest") -> DiffusionExperiment:
         checkpoint_file, payload = self.checkpoint_manager.load(epoch)
 
-        if self.seed is not None:
-            torch.manual_seed(self.seed)
+        torch.manual_seed(self.seed)
 
         meta_payload = payload.get("meta", {})
         meta = dict(meta_payload) if isinstance(meta_payload, Mapping) else {}
@@ -116,7 +122,7 @@ class DiffusionArtifactLoader:
         model = _load_model_from_payload(payload, expected="DiffusionExperiment")
         model.horizon = int(getattr(model, "horizon", horizon))
         model.state_dim = int(getattr(model, "state_dim", state_dim))
-        if self.seed is not None and hasattr(model, "set_seed"):
+        if hasattr(model, "set_seed"):
             set_seed = cast(Callable[[int], None], model.set_seed)
             set_seed(self.seed)
         existing_meta = getattr(model, "meta", None)
@@ -126,6 +132,9 @@ class DiffusionArtifactLoader:
             model.meta = merged_meta
         else:
             model.meta = meta
+
+        if isinstance(model, torch.nn.Module):
+            model.to(self._device)
 
         payload_dataset = DiffusionDataset(
             name=dataset_name,

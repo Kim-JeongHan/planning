@@ -226,6 +226,7 @@ class TemporalUnet(nn.Module):
         # x: [batch, horizon, dim],  t: [batch]
         orig_h = x.shape[1]
         x = x.permute(0, 2, 1)  # [batch, dim, horizon] - channels-first for Conv1d
+        t = t.to(device=x.device)
 
         x, pad = self._pad_to_multiple(x)
 
