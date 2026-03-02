@@ -13,31 +13,16 @@ from pydantic import BaseModel, ValidationError, field_validator
 
 from planning.collision import BoundedCollisionChecker, ObstacleCollisionChecker
 from planning.constraint import select_collision_free_trajectory
-from planning.diffusion import check_compatibility
+from planning.diffusion import CheckpointManager, check_compatibility
+from planning.diffusion.config import DiffusionInferenceConfig
 from planning.diffusion.sampling import GuidedPolicy, ValueGuide
-from planning.diffusion.utils import CheckpointCatalog, DiffusionArtifactLoader
+from planning.diffusion.utils import DiffusionArtifactLoader
 from planning.map import Map
 from planning.visualization import save_docs_image, setup_camera_top_view
 
 DEFAULT_RUN_CONFIG_PATH = "config/diffusion_trajectory_one_shot.yaml"
 DEFAULT_DOCS_IMAGE = "diffusion_trajectory_one_shot_example.png"
 
-
-class DiffusionConfig(BaseModel):
-    """Diffusion model loading and sampling configuration."""
-
-    seed: int = 42
-    device: str = "cpu"
-    loadbase: str = "logs/pretrained"
-    dataset: str
-    config: str | None = None
-    diffusion_loadpath: str = "f:diffusion/defaults_H{horizon}_T{n_diffusion_steps}"
-    value_loadpath: str = "f:values/defaults_H{horizon}_T{n_diffusion_steps}_d{discount}"
-    diffusion_epoch: int | str = "latest"
-    value_epoch: int | str = "latest"
-    n_guide_steps: int = 2
-    scale: float = 0.1
-    sample_batch_size: int = 4
 
 
 class EnvironmentConfig(BaseModel):
@@ -85,7 +70,7 @@ class RolloutConfig(BaseModel):
 class DiffusionOneShotConfig(BaseModel):
     """Root config grouped by concerns."""
 
-    diffusion: DiffusionConfig
+    diffusion: DiffusionInferenceConfig
     environment: EnvironmentConfig
     rollout: RolloutConfig = RolloutConfig()
 
@@ -183,20 +168,14 @@ def main(
     )
     diffusion_config = config.diffusion
     diffusion_loader = DiffusionArtifactLoader(
-        CheckpointCatalog(
-            diffusion_config.loadbase,
-            dataset=diffusion_config.dataset,
-            loadpath=diffusion_config.diffusion_loadpath,
-            config=diffusion_config.config,
+        CheckpointManager.for_loading(
+            diffusion_config.diffusion_checkpoint_path, device=diffusion_config.device
         ),
         seed=diffusion_config.seed,
     )
     value_loader = DiffusionArtifactLoader(
-        CheckpointCatalog(
-            diffusion_config.loadbase,
-            dataset=diffusion_config.dataset,
-            loadpath=diffusion_config.value_loadpath,
-            config=diffusion_config.config,
+        CheckpointManager.for_loading(
+            diffusion_config.value_checkpoint_path, device=diffusion_config.device
         ),
         seed=diffusion_config.seed,
     )

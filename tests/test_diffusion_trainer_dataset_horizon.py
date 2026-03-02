@@ -8,10 +8,10 @@ import numpy as np
 import pytest
 
 
-def _pipeline_kwargs(dataset_path: Path, output_root: Path) -> dict[str, object]:
+def _pipeline_kwargs(dataset_path: Path, output_path: Path) -> dict[str, object]:
     return {
         "dataset": str(dataset_path),
-        "output_root": str(output_root),
+        "output_path": str(output_path),
         "state_dim": 3,
         "n_diffusion_steps": 16,
         "epochs": 1,

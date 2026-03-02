@@ -13,36 +13,38 @@ PROJECT_CONFIG_DIR = PROJECT_ROOT / "config"
 class DiffusionBaseConfig(BaseModel):
     """Arguments shared by diffusion inference and training configs."""
 
-    dataset: str
     n_diffusion_steps: int = 100
     discount: float = 1.0
-    seed: int | None = None
+    horizon: int = 16
+    seed: int = 42
 
 
-class DiffusionConfig(DiffusionBaseConfig):
+class DiffusionInferenceConfig(DiffusionBaseConfig):
     """Diffusion artifact loading and sampling configuration."""
 
-    seed: int = 42
-    loadbase: str = "logs/pretrained"
-    config: str | None = None
-    diffusion_loadpath: str = "f:diffusion/defaults_H{horizon}_T{n_diffusion_steps}"
-    value_loadpath: str = "f:values/defaults_H{horizon}_T{n_diffusion_steps}_d{discount}"
+    checkpoint_path: str = "logs/pretrained"
+    device: str = "cpu"
     diffusion_epoch: int | str = "latest"
     value_epoch: int | str = "latest"
     n_guide_steps: int = 2
     scale: float = 0.1
     sample_batch_size: int = 4
-    condition_key: int | str = 0
 
+    @property
+    def diffusion_checkpoint_path(self) -> str:
+        return str(Path(self.checkpoint_path) / "diffusion.pt")
+
+    @property
+    def value_checkpoint_path(self) -> str:
+        return str(Path(self.checkpoint_path) / "value.pt")
 
 class TrajectoryConfig(BaseModel):
     """Dataset loading configuration for trajectory preprocessing."""
 
     dataset: str
-    horizon: int | None
     state_dim: int
-    device: str = "cpu"
-    seed: int | None = None
+    device: str
+    seed: int
 
     @property
     def dataset_key(self) -> str:
@@ -53,19 +55,19 @@ class TrajectoryConfig(BaseModel):
 class CheckpointConfig(BaseModel):
     """Resolved checkpoint path configuration."""
 
-    dataset: str
-    horizon: int
-    n_diffusion_steps: int
+    horizon: int | None = None
+    n_diffusion_steps: int | None = None
     root: str | Path = "logs"
+    checkpoint_path: str | Path | None = None
+    device: str = "cpu"
     discount: float | None = None
 
 
-class DiffusionTrainingPipelineConfig(DiffusionBaseConfig):
+class DiffusionTrainingConfig(DiffusionBaseConfig):
     """Structured configuration for local diffusion training pipeline orchestration."""
 
-    n_diffusion_steps: int
-    output_root: str
-    horizon: int | None
+    dataset: str
+    output_path: str
     state_dim: int
     epochs: int
     batch_size: int
@@ -106,14 +108,14 @@ class DiffusionTrainingPipelineConfig(DiffusionBaseConfig):
         )
 
     def to_checkpoint_config(self) -> CheckpointConfig:
-        """Build checkpoint config from pipeline config and resolved dataset key."""
+        """Build checkpoint config from pipeline config."""
         if self.horizon is None:
             raise ValueError("horizon must be provided before creating checkpoint config.")
         return CheckpointConfig(
-            dataset=self.dataset_key,
             horizon=self.horizon,
             n_diffusion_steps=self.n_diffusion_steps,
-            root=self.output_root,
+            root=self.output_path,
+            device=self.device,
             discount=self.discount,
         )
 
@@ -126,7 +128,7 @@ class DiffusionTrainingPipelineConfig(DiffusionBaseConfig):
         return schedule
 
     @model_validator(mode="after")
-    def _validate_training_parameters(self) -> DiffusionTrainingPipelineConfig:
+    def _validate_training_parameters(self) -> DiffusionTrainingConfig:
         if self.lr_schedule == "step" and self.lr_step_size <= 0:
             raise ValueError("lr_step_size must be positive when lr_schedule='step'.")
         if self.lr_schedule == "step" and not 0.0 < self.lr_gamma < 1.0:
@@ -157,7 +159,7 @@ __all__ = [
     "PROJECT_ROOT",
     "CheckpointConfig",
     "DiffusionBaseConfig",
-    "DiffusionConfig",
-    "DiffusionTrainingPipelineConfig",
+    "DiffusionInferenceConfig",
+    "DiffusionTrainingConfig",
     "TrajectoryConfig",
 ]

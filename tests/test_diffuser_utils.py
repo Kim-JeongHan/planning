@@ -7,35 +7,20 @@ from pathlib import Path
 import pytest
 
 from planning.diffusion.core import PlannerStateNormalizer
-from planning.diffusion.utils import (
-    CheckpointCatalog,
-    DiffusionArtifactLoader,
-    TemplatingContextResolver,
-)
+from planning.diffusion.training.checkpoint import CheckpointManager
+from planning.diffusion.utils import DiffusionArtifactLoader
 
 
-def test_templating_context_resolver_fallback() -> None:
-    resolver = TemplatingContextResolver()
-    resolved = resolver.resolve(
-        "f:diffusion/defaults_H{horizon}_T{n_diffusion_steps}",
-        dataset="unit-dataset",
-    )
-    assert resolved == "diffusion/defaults_H64_T100"
-
-
-def test_checkpoint_catalog_collects_epoch_files(tmp_path: Path) -> None:
-    loadbase = tmp_path / "logs"
-    dataset = "unit-dataset"
-    runpath = "f:diffusion/defaults_H{horizon}_T{n_diffusion_steps}"
-    root = loadbase / dataset / "diffusion" / "defaults_H8_T16"
+def test_checkpoint_manager_collects_epoch_files(tmp_path: Path) -> None:
+    root = tmp_path / "logs" / "diffusion" / "defaults_H8_T16"
     root.mkdir(parents=True, exist_ok=True)
     (root / "epoch_0010.ckpt").write_text("stub")
     (root / "epoch_0002.ckpt").write_text("stub")
 
-    catalog = CheckpointCatalog(str(loadbase), dataset=dataset, loadpath=runpath)
-    candidates = catalog.candidates()
+    manager = CheckpointManager.for_loading(str(root))
+    candidates = manager.candidates()
 
-    assert catalog.root == root
+    assert manager.root == root
     assert [path.name for _, path in candidates] == ["epoch_0002.ckpt", "epoch_0010.ckpt"]
 
 
@@ -44,9 +29,7 @@ def test_diffusion_artifact_loader_loads_epoch_checkpoint(tmp_path: Path) -> Non
 
     from planning.diffusion.model import DiffusionModel
 
-    dataset = "unit-dataset"
-    loadbase = tmp_path / "logs"
-    root = loadbase / dataset / "diffusion" / "defaults_H4_T8"
+    root = tmp_path / "logs" / "diffusion" / "defaults_H4_T8"
     root.mkdir(parents=True, exist_ok=True)
 
     model = DiffusionModel(
@@ -69,8 +52,8 @@ def test_diffusion_artifact_loader_loads_epoch_checkpoint(tmp_path: Path) -> Non
             "horizon": 4,
             "state_dim": 3,
             "n_diffusion_steps": 8,
-            "dataset": dataset,
-            "name": dataset,
+            "dataset": "unit-dataset",
+            "name": "unit-dataset",
             "epoch": 1,
             "loss": 0.123,
         },
@@ -80,14 +63,18 @@ def test_diffusion_artifact_loader_loads_epoch_checkpoint(tmp_path: Path) -> Non
     ckpt_path = root / "epoch_0001.ckpt"
     torch.save(payload, ckpt_path)
 
-    catalog = CheckpointCatalog(
-        str(loadbase),
-        dataset=dataset,
-        loadpath="f:diffusion/defaults_H{horizon}_T{n_diffusion_steps}",
-    )
-    artifact = DiffusionArtifactLoader(catalog).load("1")
+    manager = CheckpointManager.for_loading(str(root))
+    artifact = DiffusionArtifactLoader(manager).load("1")
 
-    assert artifact.dataset.name == dataset
+    assert artifact.dataset.name == "unit-dataset"
     assert artifact.dataset.horizon == 4
     assert artifact.dataset.state_dim == 3
     assert "path" in artifact.meta
+
+
+def test_checkpoint_manager_accepts_absolute_checkpoint_path(tmp_path: Path) -> None:
+    root = tmp_path / "standalone"
+    root.mkdir(parents=True, exist_ok=True)
+
+    manager = CheckpointManager.for_loading(str(root))
+    assert manager.root == root

@@ -7,13 +7,13 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from planning.diffusion.config import DiffusionTrainingPipelineConfig
+from planning.diffusion.config import DiffusionTrainingConfig
 
 
-def _base_training_args(output_root: Path) -> dict[str, object]:
+def _base_training_args(output_path: Path) -> dict[str, object]:
     return {
         "dataset": "dummy.npz",
-        "output_root": str(output_root),
+        "output_path": str(output_path),
         "state_dim": 3,
         "horizon": 5,
         "epochs": 1,
@@ -23,7 +23,7 @@ def _base_training_args(output_root: Path) -> dict[str, object]:
 
 
 def test_lr_schedule_is_normalized_in_config(tmp_path: Path) -> None:
-    cfg = DiffusionTrainingPipelineConfig(
+    cfg = DiffusionTrainingConfig(
         **_base_training_args(tmp_path / "logs"),
         lr_schedule="  StEp ",
         lr_step_size=100,
@@ -34,7 +34,7 @@ def test_lr_schedule_is_normalized_in_config(tmp_path: Path) -> None:
 
 def test_lr_schedule_rejects_invalid_schedule(tmp_path: Path) -> None:
     with pytest.raises(ValidationError, match="Unsupported lr-schedule"):
-        DiffusionTrainingPipelineConfig(
+        DiffusionTrainingConfig(
             **_base_training_args(tmp_path / "logs"),
             lr_schedule="triangular",
         )
@@ -42,14 +42,14 @@ def test_lr_schedule_rejects_invalid_schedule(tmp_path: Path) -> None:
 
 def test_lr_schedule_rejects_step_misconfiguration(tmp_path: Path) -> None:
     with pytest.raises(ValidationError, match="lr_step_size must be positive"):
-        DiffusionTrainingPipelineConfig(
+        DiffusionTrainingConfig(
             **_base_training_args(tmp_path / "logs"),
             lr_schedule="step",
             lr_step_size=0,
         )
 
     with pytest.raises(ValidationError, match="lr_gamma must be in the interval"):
-        DiffusionTrainingPipelineConfig(
+        DiffusionTrainingConfig(
             **_base_training_args(tmp_path / "logs"),
             lr_schedule="step",
             lr_step_size=1,
@@ -59,7 +59,7 @@ def test_lr_schedule_rejects_step_misconfiguration(tmp_path: Path) -> None:
 
 def test_lr_min_is_non_negative(tmp_path: Path) -> None:
     with pytest.raises(ValidationError, match="lr_min must be non-negative"):
-        DiffusionTrainingPipelineConfig(
+        DiffusionTrainingConfig(
             **_base_training_args(tmp_path / "logs"),
             lr_min=-1e-3,
         )
@@ -67,22 +67,22 @@ def test_lr_min_is_non_negative(tmp_path: Path) -> None:
 
 def test_patience_and_delta_are_validated_in_config(tmp_path: Path) -> None:
     with pytest.raises(ValidationError, match="diffusion_patience must be >= 1"):
-        DiffusionTrainingPipelineConfig(
+        DiffusionTrainingConfig(
             **_base_training_args(tmp_path / "logs"),
             diffusion_patience=0,
         )
     with pytest.raises(ValidationError, match="value_patience must be >= 1"):
-        DiffusionTrainingPipelineConfig(
+        DiffusionTrainingConfig(
             **_base_training_args(tmp_path / "logs"),
             value_patience=0,
         )
     with pytest.raises(ValidationError, match="diffusion_min_delta must be >= 0"):
-        DiffusionTrainingPipelineConfig(
+        DiffusionTrainingConfig(
             **_base_training_args(tmp_path / "logs"),
             diffusion_min_delta=-0.1,
         )
     with pytest.raises(ValidationError, match="value_min_delta must be >= 0"):
-        DiffusionTrainingPipelineConfig(
+        DiffusionTrainingConfig(
             **_base_training_args(tmp_path / "logs"),
             value_min_delta=-0.1,
         )
@@ -90,22 +90,22 @@ def test_patience_and_delta_are_validated_in_config(tmp_path: Path) -> None:
 
 def test_checkpoint_policy_and_validation_split_are_validated_in_config(tmp_path: Path) -> None:
     with pytest.raises(ValidationError, match="checkpoint_every must be >= 0"):
-        DiffusionTrainingPipelineConfig(
+        DiffusionTrainingConfig(
             **_base_training_args(tmp_path / "logs"),
             checkpoint_every=-1,
         )
     with pytest.raises(ValidationError, match="keep_last_checkpoints must be >= 0"):
-        DiffusionTrainingPipelineConfig(
+        DiffusionTrainingConfig(
             **_base_training_args(tmp_path / "logs"),
             keep_last_checkpoints=-1,
         )
     with pytest.raises(ValidationError, match="latest_checkpoint_every must be >= 0"):
-        DiffusionTrainingPipelineConfig(
+        DiffusionTrainingConfig(
             **_base_training_args(tmp_path / "logs"),
             latest_checkpoint_every=-1,
         )
     with pytest.raises(ValidationError, match=r"validation_split must be in \[0.0, 1.0\)"):
-        DiffusionTrainingPipelineConfig(
+        DiffusionTrainingConfig(
             **_base_training_args(tmp_path / "logs"),
             validation_split=1.0,
         )
@@ -114,7 +114,7 @@ def test_checkpoint_policy_and_validation_split_are_validated_in_config(tmp_path
 def test_dataset_key_is_derived_from_dataset_path(tmp_path: Path) -> None:
     args = _base_training_args(tmp_path / "logs")
     args["dataset"] = str(tmp_path / "data" / "my_dataset.npz")
-    cfg = DiffusionTrainingPipelineConfig(
+    cfg = DiffusionTrainingConfig(
         **args,
     )
     assert cfg.dataset_key == "my_dataset"
@@ -123,7 +123,7 @@ def test_dataset_key_is_derived_from_dataset_path(tmp_path: Path) -> None:
 def test_dataset_key_falls_back_when_dataset_stem_is_empty(tmp_path: Path) -> None:
     args = _base_training_args(tmp_path / "logs")
     args["dataset"] = "."
-    cfg = DiffusionTrainingPipelineConfig(
+    cfg = DiffusionTrainingConfig(
         **args,
     )
     assert cfg.dataset_key == "dataset"

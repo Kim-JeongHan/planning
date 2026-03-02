@@ -13,12 +13,11 @@ import torch  # type: ignore
 from torch.utils.tensorboard import SummaryWriter  # type: ignore
 from tqdm import tqdm
 
-from ..config import DiffusionTrainingPipelineConfig
+from ..config import DiffusionTrainingConfig
 from ..core import PlannerStateNormalizer
 from ..model import DiffusionModel, ValueModel
 from .checkpoint import (
-    CheckpointPathManager,
-    CheckpointWriter,
+    CheckpointManager,
 )
 from .dataset import TorchTensorFactory, TrajectoryDataSetSource
 from .epoch_trainer import DiffusionEpochTrainer, EMAAccumulator, ValueEpochTrainer
@@ -41,9 +40,9 @@ class _StageParams:
     patience: int | None
     min_delta: float
     log_every: int
-    config: DiffusionTrainingPipelineConfig
+    config: DiffusionTrainingConfig
     normalizer: object
-    checkpoint_writer: CheckpointWriter
+    checkpoint_manager: CheckpointManager
     train_loader: object
     val_loader: object | None
     summary_writer: object | None
@@ -95,7 +94,7 @@ class DiffusionTrainingPipeline:
     """Orchestrator for diffusion/value training workflow."""
 
     def __init__(self, **values: object) -> None:
-        self.cfg = DiffusionTrainingPipelineConfig(**values)
+        self.cfg = DiffusionTrainingConfig(**values)
 
     def run(self) -> list[Path]:
         cfg = self.cfg
@@ -107,7 +106,7 @@ class DiffusionTrainingPipeline:
         device = torch.device(cfg.device)
         _LOGGER.info("Training device: %s", device)
 
-        writer_dir = Path(cfg.output_root) / "tensorboard"
+        writer_dir = Path(cfg.output_path) / "tensorboard"
         writer_dir.mkdir(parents=True, exist_ok=True)
         summary_writer = SummaryWriter(log_dir=str(writer_dir))
 
@@ -115,7 +114,7 @@ class DiffusionTrainingPipeline:
             trajectories, normalizer = self._load_and_prepare_dataset()
             config = self.cfg
             train_loader, val_loader = self._build_data_loaders(trajectories, normalizer, config)
-            checkpoint_writer = self._build_checkpoint_writer(config)
+            checkpoint_manager = self._build_checkpoint_manager(config)
 
             if summary_writer is not None:
                 _log_config_summary(summary_writer, config)
@@ -128,7 +127,7 @@ class DiffusionTrainingPipeline:
                     normalizer=normalizer,
                     train_loader=train_loader,
                     val_loader=val_loader,
-                    checkpoint_writer=checkpoint_writer,
+                    checkpoint_manager=checkpoint_manager,
                     summary_writer=summary_writer,
                     training_device=device,
                 )
@@ -139,7 +138,7 @@ class DiffusionTrainingPipeline:
                     normalizer=normalizer,
                     train_loader=train_loader,
                     val_loader=val_loader,
-                    checkpoint_writer=checkpoint_writer,
+                    checkpoint_manager=checkpoint_manager,
                     summary_writer=summary_writer,
                     training_device=device,
                 )
@@ -180,7 +179,7 @@ class DiffusionTrainingPipeline:
         self,
         trajectories: torch.Tensor,
         normalizer: PlannerStateNormalizer,
-        config: DiffusionTrainingPipelineConfig,
+        config: DiffusionTrainingConfig,
     ) -> tuple[object, object | None]:
         tensor_factory = TorchTensorFactory(normalizer)
         obs_t, cond_t = tensor_factory.to_torch_tensors(trajectories)
@@ -215,11 +214,11 @@ class DiffusionTrainingPipeline:
             torch.utils.data.DataLoader(val_subset, batch_size=config.batch_size, shuffle=False),
         )
 
-    def _build_checkpoint_writer(
-        self, config: DiffusionTrainingPipelineConfig
-    ) -> CheckpointWriter:
+    def _build_checkpoint_manager(
+        self, config: DiffusionTrainingConfig
+    ) -> CheckpointManager:
         checkpoint_config = config.to_checkpoint_config()
-        return CheckpointWriter(CheckpointPathManager(checkpoint_config))
+        return CheckpointManager(checkpoint_config)
 
     def _build_common_stage_params(
         self,
@@ -232,11 +231,11 @@ class DiffusionTrainingPipeline:
         effective_epochs: int,
         patience: int | None,
         min_delta: float,
-        config: DiffusionTrainingPipelineConfig,
+        config: DiffusionTrainingConfig,
         normalizer: object,
         train_loader: object,
         val_loader: object | None,
-        checkpoint_writer: CheckpointWriter,
+        checkpoint_manager: CheckpointManager,
         summary_writer: object | None,
         extra_meta: dict[str, object] | None = None,
     ) -> _StageParams:
@@ -252,7 +251,7 @@ class DiffusionTrainingPipeline:
             log_every=_coerce_log_every(effective_epochs, self.cfg.log_every),
             config=config,
             normalizer=normalizer,
-            checkpoint_writer=checkpoint_writer,
+            checkpoint_manager=checkpoint_manager,
             train_loader=train_loader,
             val_loader=val_loader,
             summary_writer=summary_writer,
@@ -265,11 +264,11 @@ class DiffusionTrainingPipeline:
     def _run_diffusion_stage(
         self,
         *,
-        config: DiffusionTrainingPipelineConfig,
+        config: DiffusionTrainingConfig,
         normalizer: PlannerStateNormalizer,
         train_loader: object,
         val_loader: object | None,
-        checkpoint_writer: CheckpointWriter,
+        checkpoint_manager: CheckpointManager,
         summary_writer: object | None,
         training_device: torch.device,
     ) -> list[Path]:
@@ -304,18 +303,18 @@ class DiffusionTrainingPipeline:
             effective_epochs=effective_epochs, patience=patience, min_delta=min_delta,
             config=config, normalizer=normalizer,
             train_loader=train_loader, val_loader=val_loader,
-            checkpoint_writer=checkpoint_writer, summary_writer=summary_writer,
+            checkpoint_manager=checkpoint_manager, summary_writer=summary_writer,
         )
         return self._run_stage(params)
 
     def _run_value_stage(
         self,
         *,
-        config: DiffusionTrainingPipelineConfig,
+        config: DiffusionTrainingConfig,
         normalizer: PlannerStateNormalizer,
         train_loader: object,
         val_loader: object | None,
-        checkpoint_writer: CheckpointWriter,
+        checkpoint_manager: CheckpointManager,
         summary_writer: object | None,
         training_device: torch.device,
     ) -> list[Path]:
@@ -345,7 +344,7 @@ class DiffusionTrainingPipeline:
             effective_epochs=effective_epochs, patience=patience, min_delta=min_delta,
             config=config, normalizer=normalizer,
             train_loader=train_loader, val_loader=val_loader,
-            checkpoint_writer=checkpoint_writer, summary_writer=summary_writer,
+            checkpoint_manager=checkpoint_manager, summary_writer=summary_writer,
             extra_meta={"discount": config.discount},
         )
         return self._run_stage(params)
@@ -354,8 +353,8 @@ class DiffusionTrainingPipeline:
         ckpts: list[Path] = []
         tracker = EpochLossTracker(min_delta=p.min_delta, patience=p.patience)
         recent_ckpts: deque[Path] = deque()
-        latest_ckpt = p.checkpoint_writer.path_manager.latest(p.phase)
-        best_ckpt = p.checkpoint_writer.path_manager.best(p.phase)
+        latest_ckpt = p.checkpoint_manager.latest(p.phase)
+        best_ckpt = p.checkpoint_manager.best(p.phase)
         bar = tqdm(
             range(1, p.effective_epochs + 1),
             desc=f"{p.phase.title()} training",
@@ -457,7 +456,7 @@ def _log_scalar(writer: object | None, tag: str, value: float, step: int) -> Non
         writer.add_scalar(tag, float(value), step)  # type: ignore[union-attr]
 
 
-def _log_config_summary(writer: object, config: DiffusionTrainingPipelineConfig) -> None:
+def _log_config_summary(writer: object, config: DiffusionTrainingConfig) -> None:
     writer.add_text(  # type: ignore[union-attr]
         "training/config",
         (
@@ -535,7 +534,7 @@ def _append_unique(paths: list[Path], value: Path) -> None:
 
 def _build_checkpoint_meta(
     *,
-    config: DiffusionTrainingPipelineConfig,
+    config: DiffusionTrainingConfig,
     epoch: int,
     loss: float,
     extra: dict[str, object] | None = None,
@@ -587,8 +586,8 @@ def _manage_stage_checkpoints(
         return ema_sd
 
     if p.checkpoint_every > 0 and epoch % p.checkpoint_every == 0:
-        periodic = p.checkpoint_writer.path_manager.checkpoint_path(p.phase, epoch)
-        p.checkpoint_writer.save(
+        periodic = p.checkpoint_manager.checkpoint_path(p.phase, epoch)
+        p.checkpoint_manager.save(
             periodic,
             model=p.model,
             normalizer=p.normalizer,
@@ -612,7 +611,7 @@ def _manage_stage_checkpoints(
         checkpoint_every=p.checkpoint_every,
         latest_checkpoint_every=p.latest_checkpoint_every,
     ):
-        p.checkpoint_writer.save(
+        p.checkpoint_manager.save(
             latest_ckpt,
             model=p.model,
             normalizer=p.normalizer,
@@ -635,7 +634,7 @@ def _manage_stage_checkpoints(
             extra=p.extra_meta,
         )
         best_meta["is_best"] = True
-        p.checkpoint_writer.save(
+        p.checkpoint_manager.save(
             best_ckpt,
             model=p.model,
             normalizer=p.normalizer,
@@ -644,3 +643,16 @@ def _manage_stage_checkpoints(
             ema_state_dict=_ema_state_dict(),
         )
         _append_unique(ckpt_paths, best_ckpt)
+
+        output_path = getattr(p.config, "output_path", None)
+        if output_path:
+            phase_alias = Path(str(output_path)) / f"{p.phase}.pt"
+            p.checkpoint_manager.save(
+                phase_alias,
+                model=p.model,
+                normalizer=p.normalizer,
+                meta=best_meta,
+                model_kind=p.phase,
+                ema_state_dict=_ema_state_dict(),
+            )
+            _append_unique(ckpt_paths, phase_alias)

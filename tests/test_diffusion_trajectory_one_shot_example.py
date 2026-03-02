@@ -70,8 +70,7 @@ def test_load_run_config_reads_yaml(tmp_path: Path) -> None:
     config_path = tmp_path / "one_shot.yaml"
     config_path.write_text(
         "diffusion:\n"
-        "  dataset: test_dataset\n"
-        "  loadbase: logs/pretrained\n"
+        "  checkpoint_path: logs/pretrained\n"
         "environment:\n"
         "  start_state: [1.0, 2.0, 1.0]\n"
         "  goal_state: [2.0, 3.0, 1.0]\n"
@@ -83,7 +82,7 @@ def test_load_run_config_reads_yaml(tmp_path: Path) -> None:
 
     assert cfg.environment.start_state == (1.0, 2.0, 1.0)
     assert cfg.environment.goal_state == (2.0, 3.0, 1.0)
-    assert cfg.diffusion.dataset == "test_dataset"
+    assert cfg.diffusion.diffusion_checkpoint_path == "logs/pretrained/diffusion.pt"
 
 
 def test_select_collision_free_trajectory_prefers_first_valid() -> None:

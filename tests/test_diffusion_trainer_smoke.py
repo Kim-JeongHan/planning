@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from collections import deque
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from planning.diffusion.config import DiffusionTrainingPipelineConfig
+from planning.diffusion.config import DiffusionTrainingConfig
 
 
 def test_training_smoke(tmp_path: Path) -> None:
@@ -20,7 +21,7 @@ def test_training_smoke(tmp_path: Path) -> None:
 
     checkpoints = DiffusionTrainingPipeline(
         dataset=str(dataset_path),
-        output_root=str(tmp_path / "logs"),
+        output_path=str(tmp_path / "logs"),
         horizon=5,
         state_dim=3,
         n_diffusion_steps=16,
@@ -32,6 +33,7 @@ def test_training_smoke(tmp_path: Path) -> None:
 
     assert checkpoints
     assert all((tmp_path / "logs").rglob("*.ckpt"))
+    assert (tmp_path / "logs" / "diffusion.pt").exists()
 
 
 def test_training_package_exports_pipeline() -> None:
@@ -51,7 +53,7 @@ def test_hydra_cli_overrides() -> None:
             config_name="diffusion_3d_training",
             overrides=[
                 "dataset=dummy.npz",
-                "output_root=logs/custom_root",
+                "output_path=logs/custom_root",
                 "+diffusion_max_epochs=2",
                 "+value_patience=3",
                 "+diffusion_min_delta=0.05",
@@ -72,28 +74,8 @@ def test_hydra_cli_overrides() -> None:
     assert cfg.n_hidden == 64
     assert cfg.device == "cuda:0"
 
-    pipeline_cfg = DiffusionTrainingPipelineConfig(**dict(cfg))
-    assert (Path(pipeline_cfg.output_root) / "tensorboard") == Path("logs/custom_root/tensorboard")
-
-
-def test_resolve_training_device_auto_falls_back_to_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
-    from planning.diffusion.training import trainer
-
-    monkeypatch.setattr(trainer.torch.cuda, "is_available", lambda: False)
-    resolved = trainer._resolve_training_device("auto")
-
-    assert resolved.type == "cpu"
-
-
-def test_resolve_training_device_rejects_cuda_when_unavailable(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from planning.diffusion.training import trainer
-
-    monkeypatch.setattr(trainer.torch.cuda, "is_available", lambda: False)
-
-    with pytest.raises(ValueError, match="CUDA was requested"):
-        trainer._resolve_training_device("cuda")
+    pipeline_cfg = DiffusionTrainingConfig(**dict(cfg))
+    assert (Path(pipeline_cfg.output_path) / "tensorboard") == Path("logs/custom_root/tensorboard")
 
 
 def test_training_pipeline_uses_cpu_tensor_factory(
@@ -132,7 +114,7 @@ def test_training_pipeline_uses_cpu_tensor_factory(
 
     trainer.DiffusionTrainingPipeline(
         dataset=str(dataset_path),
-        output_root=str(tmp_path / "logs"),
+        output_path=str(tmp_path / "logs"),
         horizon=5,
         state_dim=3,
         n_diffusion_steps=16,
@@ -156,19 +138,16 @@ def test_manage_stage_checkpoints_skips_ema_snapshot_when_nothing_is_saved(tmp_p
             self.calls += 1
             return {"weight": self.calls}
 
-    class StubPathManager:
+    class StubCheckpointManager:
         def __init__(self, root: Path) -> None:
             self._root = root
 
         def checkpoint_path(self, kind: str, epoch: int) -> Path:
             return self._root / kind / f"epoch_{epoch:04d}.ckpt"
 
-        def checkpoint_root(self, kind: str) -> Path:
-            return self._root / kind
-
-    class RecordingWriter:
-        def __init__(self, path_manager: StubPathManager) -> None:
-            self.path_manager = path_manager
+    class RecordingManager(StubCheckpointManager):
+        def __init__(self, root: Path) -> None:
+            super().__init__(root)
             self.calls: list[dict[str, object]] = []
 
         def save(
@@ -187,32 +166,42 @@ def test_manage_stage_checkpoints_skips_ema_snapshot_when_nothing_is_saved(tmp_p
             return path
 
     ema = CountingEMA()
-    writer = RecordingWriter(StubPathManager(tmp_path))
-    trainer._manage_stage_checkpoints(
+    manager = RecordingManager(tmp_path)
+    params = trainer._StageParams(
         phase="diffusion",
-        epoch=2,
-        total_epochs=10,
+        epoch_trainer=object(),
         model=object(),
+        optimizer=object(),
         ema=ema,
+        effective_epochs=10,
+        patience=None,
+        min_delta=0.0,
+        log_every=1,
+        config=object(),
         normalizer=object(),
-        checkpoint_writer=writer,
-        config=object(),  # not used because no checkpoint write occurs
-        dataset_key="toy",
-        metric_loss=10.0,
-        train_loss=10.0,
-        is_new_best=False,
-        recent_ckpts=[],
-        ckpt_paths=[],
-        latest_ckpt=tmp_path / "latest.ckpt",
-        best_ckpt=tmp_path / "best.ckpt",
+        checkpoint_manager=manager,
+        train_loader=object(),
+        val_loader=None,
+        summary_writer=None,
         checkpoint_every=0,
         latest_checkpoint_every=0,
         keep_last_checkpoints=0,
         extra_meta=None,
     )
+    trainer._manage_stage_checkpoints(
+        params,
+        epoch=2,
+        metric_loss=10.0,
+        train_loss=10.0,
+        is_new_best=False,
+        recent_ckpts=deque(),
+        ckpt_paths=[],
+        latest_ckpt=tmp_path / "latest.ckpt",
+        best_ckpt=tmp_path / "best.ckpt",
+    )
 
     assert ema.calls == 0
-    assert writer.calls == []
+    assert manager.calls == []
 
 
 def test_manage_stage_checkpoints_reuses_single_ema_snapshot_when_writing(tmp_path: Path) -> None:
@@ -228,19 +217,16 @@ def test_manage_stage_checkpoints_reuses_single_ema_snapshot_when_writing(tmp_pa
             self.calls += 1
             return {"weight": self.calls}
 
-    class StubPathManager:
+    class StubCheckpointManager:
         def __init__(self, root: Path) -> None:
             self._root = root
 
         def checkpoint_path(self, kind: str, epoch: int) -> Path:
             return self._root / kind / f"epoch_{epoch:04d}.ckpt"
 
-        def checkpoint_root(self, kind: str) -> Path:
-            return self._root / kind
-
-    class RecordingWriter:
-        def __init__(self, path_manager: StubPathManager) -> None:
-            self.path_manager = path_manager
+    class RecordingManager(StubCheckpointManager):
+        def __init__(self, root: Path) -> None:
+            super().__init__(root)
             self.calls: list[dict[str, object]] = []
 
         def save(
@@ -264,37 +250,53 @@ def test_manage_stage_checkpoints_reuses_single_ema_snapshot_when_writing(tmp_pa
             return path
 
     ema = CountingEMA()
-    writer = RecordingWriter(StubPathManager(tmp_path))
-    config = SimpleNamespace(horizon=5, state_dim=3, n_diffusion_steps=8, n_hidden=16)
+    manager = RecordingManager(tmp_path)
+    config = SimpleNamespace(
+        dataset_key="toy",
+        horizon=5,
+        state_dim=3,
+        n_diffusion_steps=8,
+        n_hidden=16,
+    )
     ckpt_paths: list[Path] = []
 
-    trainer._manage_stage_checkpoints(
+    params = trainer._StageParams(
         phase="diffusion",
-        epoch=1,
-        total_epochs=2,
+        epoch_trainer=object(),
         model=object(),
+        optimizer=object(),
         ema=ema,
-        normalizer=object(),
-        checkpoint_writer=writer,
+        effective_epochs=2,
+        patience=None,
+        min_delta=0.0,
+        log_every=1,
         config=config,
-        dataset_key="toy",
-        metric_loss=1.0,
-        train_loss=1.0,
-        is_new_best=True,
-        recent_ckpts=[],
-        ckpt_paths=ckpt_paths,
-        latest_ckpt=tmp_path / "latest.ckpt",
-        best_ckpt=tmp_path / "best.ckpt",
+        normalizer=object(),
+        checkpoint_manager=manager,
+        train_loader=object(),
+        val_loader=None,
+        summary_writer=None,
         checkpoint_every=1,
         latest_checkpoint_every=1,
         keep_last_checkpoints=0,
         extra_meta=None,
     )
+    trainer._manage_stage_checkpoints(
+        params,
+        epoch=1,
+        metric_loss=1.0,
+        train_loss=1.0,
+        is_new_best=True,
+        recent_ckpts=deque(),
+        ckpt_paths=ckpt_paths,
+        latest_ckpt=tmp_path / "latest.ckpt",
+        best_ckpt=tmp_path / "best.ckpt",
+    )
 
-    assert len(writer.calls) == 3
+    assert len(manager.calls) == 3
     assert ema.calls == 1
-    assert {id(call["ema_state_dict"]) for call in writer.calls} == {
-        id(writer.calls[0]["ema_state_dict"])
+    assert {id(call["ema_state_dict"]) for call in manager.calls} == {
+        id(manager.calls[0]["ema_state_dict"])
     }
 
 
