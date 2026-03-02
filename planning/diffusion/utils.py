@@ -548,45 +548,6 @@ class TemplatingContextResolver:
         )
 
 
-class CheckpointResolver:
-    """Resolve checkpoint file paths from catalog + epoch spec."""
-
-    def __init__(self, catalog: CheckpointCatalog) -> None:
-        self.catalog = catalog
-
-    @property
-    def root(self) -> Path:
-        return self.catalog.root
-
-    @property
-    def candidates(self) -> list[tuple[int, Path]]:
-        return self.catalog.candidates()
-
-    @property
-    def dataset(self) -> str:
-        return self.catalog.dataset
-
-    @property
-    def loadbase(self) -> str:
-        return self.catalog.loadbase
-
-    @property
-    def loadpath(self) -> str:
-        return self.catalog.loadpath
-
-    @property
-    def config(self) -> str | None:
-        return self.catalog.config
-
-    def resolve(self, epoch: str | int) -> Path:
-        return _resolve_checkpoint_file(
-            self.loadbase,
-            self.dataset,
-            self.loadpath,
-            epoch,
-            self.config,
-        )
-
 
 class CheckpointCatalog:
     """Resolve checkpoint root and enumerate candidates."""
@@ -634,8 +595,13 @@ class DiffusionArtifactLoader:
         self.seed = seed
 
     def resolve(self, epoch: str | int) -> Path:
-        resolver = CheckpointResolver(self.catalog)
-        return resolver.resolve(epoch)
+        return _resolve_checkpoint_file(
+            self.catalog.loadbase,
+            self.catalog.dataset,
+            self.catalog.loadpath,
+            epoch,
+            self.catalog.config,
+        )
 
     def load(self, epoch: str | int = "latest") -> DiffusionExperiment:
         checkpoint_file = self.resolve(epoch)

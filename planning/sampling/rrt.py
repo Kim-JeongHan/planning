@@ -420,7 +420,7 @@ class RRTConnect(RRTBase):
         Returns:
             List of all nodes explored during planning
         """
-        return self.start_nodes + self.goal_nodes
+        return self.start_nodes + self.goal_nodes + self.failed_nodes
 
     def get_goal_node(self) -> Node | None:
         """Get the connection point for visualization.
@@ -542,20 +542,16 @@ class RRTStar(RRGBase):
                 neighbor_nodes = self.get_near_node(new_node)
                 self.graph.add_node(new_node)
 
-                if neighbor_nodes is None:
-                    continue
-
                 min_cost_node = self.get_min_cost_node([*neighbor_nodes, nearest_node], new_node)
 
-                if min_cost_node is not None:
-                    best_cost = min_cost_node.cost + min_cost_node.distance_to(new_node)
-                    new_node.change_parent(min_cost_node, best_cost)
-                    self.graph.add_edge(
-                        min_cost_node, new_node, min_cost_node.distance_to(new_node)
-                    )
-
-                else:
+                if min_cost_node is None:
                     continue
+
+                best_cost = min_cost_node.cost + min_cost_node.distance_to(new_node)
+                new_node.change_parent(min_cost_node, best_cost)
+                self.graph.add_edge(
+                    min_cost_node, new_node, min_cost_node.distance_to(new_node)
+                )
 
                 self._rewire_neighbors(new_node, neighbor_nodes)
 
@@ -736,20 +732,16 @@ class InformedRRTStar(RRTStar):
                 neighbor_nodes = self.get_near_node(new_node)
                 self.graph.add_node(new_node)
 
-                if neighbor_nodes is None:
-                    continue
-
                 min_cost_node = self.get_min_cost_node([*neighbor_nodes, nearest_node], new_node)
 
-                if min_cost_node is not None:
-                    best_cost = min_cost_node.cost + min_cost_node.distance_to(new_node)
-                    new_node.change_parent(min_cost_node, best_cost)
-                    self.graph.add_edge(
-                        min_cost_node, new_node, min_cost_node.distance_to(new_node)
-                    )
-
-                else:
+                if min_cost_node is None:
                     continue
+
+                best_cost = min_cost_node.cost + min_cost_node.distance_to(new_node)
+                new_node.change_parent(min_cost_node, best_cost)
+                self.graph.add_edge(
+                    min_cost_node, new_node, min_cost_node.distance_to(new_node)
+                )
 
                 # Rewire neighbors to use new_node if it provides a better path
                 self._rewire_neighbors(new_node, neighbor_nodes)

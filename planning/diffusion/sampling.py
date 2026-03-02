@@ -91,30 +91,6 @@ class ConditionAdapter:
             return arr[:state_dim]
         return np.zeros((state_dim,), dtype=float)
 
-    @staticmethod
-    def to_matrix(
-        condition: object,
-        batch_size: int | None,
-        fallback_dim: int | None = None,
-    ) -> np.ndarray | None:
-        if condition is None:
-            return None
-        if isinstance(condition, dict):
-            if fallback_dim is None:
-                raise ValueError("fallback_dim is required when condition is a mapping")
-            condition = ConditionAdapter.to_vector(condition, fallback_dim)
-        condition_array = np.asarray(condition, dtype=float)
-        if condition_array.ndim == 1:
-            condition_array = condition_array.reshape(1, -1)
-        elif condition_array.ndim != 2:
-            condition_array = condition_array.reshape(condition_array.shape[0], -1)
-        if batch_size is not None:
-            if condition_array.shape[0] == 1:
-                condition_array = np.repeat(condition_array, batch_size, axis=0)
-            elif condition_array.shape[0] != batch_size:
-                condition_array = condition_array[:batch_size]
-        return condition_array
-
 
 # ---------------------------------------------------------------------------
 # Model predictor (wraps the torch model for numpy-based sampling loops)
@@ -336,21 +312,15 @@ class DiffusionSamplingEngine:
 # Value guide wrapper
 # ---------------------------------------------------------------------------
 
-class ValueGuide:
-    """Thin wrapper around GuidancePolicy for use with GuidedPolicy."""
+class ValueGuide(GuidancePolicy):
+    """GuidancePolicy subclass used as the default guide for GuidedPolicy.
+
+    Accepts and discards unknown kwargs so ``Config("sampling.ValueGuide", ...)``
+    calls with extra keyword arguments do not raise.
+    """
 
     def __init__(self, model: object | None = None, verbose: bool = False, **_: object) -> None:
-        self.model = model
-        self.verbose = verbose
-        self._policy = GuidancePolicy(model=model, verbose=verbose)
-
-    def __call__(
-        self,
-        x: np.ndarray,
-        t: np.ndarray,
-        condition: dict[object, object] | None = None,
-    ) -> np.ndarray:
-        return self._policy(x, t, condition)
+        super().__init__(model=model, verbose=verbose)
 
 
 # ---------------------------------------------------------------------------
@@ -391,8 +361,9 @@ class GuidedPolicy:
         self.scale_grad_by_std = scale_grad_by_std
         self.verbose = verbose
 
-        self.horizon = max(1, int(getattr(diffusion_model, "horizon", normalizer.mean.size)))
-        self.state_dim = max(1, int(getattr(diffusion_model, "state_dim", normalizer.mean.size)))
+        default_dim = int(normalizer.mean.shape[0])
+        self.horizon = max(1, int(getattr(diffusion_model, "horizon", default_dim)))
+        self.state_dim = max(1, int(getattr(diffusion_model, "state_dim", default_dim)))
         self.schedule = DiffusionSchedule.cosine(
             n_diffusion_steps=int(getattr(diffusion_model, "n_diffusion_steps", 100))
         )

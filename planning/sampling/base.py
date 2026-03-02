@@ -169,9 +169,7 @@ class RRGBase(RRTBase):
         if num_nodes <= 1:
             return []
 
-        radius = min(
-            self.step_size, self.radius_gain * np.power(np.log(num_nodes) / num_nodes, 1 / self.dim)
-        )
+        radius = self.radius_gain * np.power(np.log(num_nodes) / num_nodes, 1 / self.dim)
 
         return get_nodes_within_radius(self.graph.nodes, target, radius)
 

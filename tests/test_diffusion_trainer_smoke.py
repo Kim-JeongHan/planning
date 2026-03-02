@@ -7,6 +7,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from planning.diffusion.config import DiffusionTrainingPipelineConfig
+
 
 def test_training_smoke(tmp_path: Path) -> None:
     pytest.importorskip("torch")
@@ -39,40 +41,39 @@ def test_training_package_exports_pipeline() -> None:
     assert PackagePipeline is ModulePipeline
 
 
-def test_train_arg_resolver_parses_advanced_flags() -> None:
-    from planning.diffusion.training.cli import TrainArgResolver
+def test_hydra_cli_overrides() -> None:
+    from hydra import compose, initialize
 
-    values = TrainArgResolver(
-        [
-            "--dataset",
-            "dummy.npz",
-            "--diffusion-max-epochs",
-            "2",
-            "--value-patience",
-            "3",
-            "--diffusion-min-delta",
-            "0.05",
-            "--tensorboard-log-dir",
-            "logs/tensorboard",
-            "--checkpoint-every",
-            "3",
-            "--keep-last-checkpoints",
-            "2",
-            "--n-hidden",
-            "64",
-            "--device",
-            "cuda:0",
-        ]
-    ).resolve()
+    with initialize(
+        config_path="../config", version_base=None
+    ):
+        cfg = compose(
+            config_name="diffusion_3d_training",
+            overrides=[
+                "dataset=dummy.npz",
+                "output_root=logs/custom_root",
+                "+diffusion_max_epochs=2",
+                "+value_patience=3",
+                "+diffusion_min_delta=0.05",
+                "checkpoint_every=3",
+                "keep_last_checkpoints=2",
+                "n_hidden=64",
+                "device=cuda:0",
+            ],
+        )
 
-    assert values["diffusion_max_epochs"] == 2
-    assert values["value_patience"] == 3
-    assert values["diffusion_min_delta"] == 0.05
-    assert values["tensorboard_log_dir"] == "logs/tensorboard"
-    assert values["checkpoint_every"] == 3
-    assert values["keep_last_checkpoints"] == 2
-    assert values["n_hidden"] == 64
-    assert values["device"] == "cuda:0"
+    assert cfg.dataset == "dummy.npz"
+    assert cfg.diffusion_max_epochs == 2
+    assert cfg.value_patience == 3
+    assert cfg.diffusion_min_delta == 0.05
+    assert "tensorboard_log_dir" not in cfg
+    assert cfg.checkpoint_every == 3
+    assert cfg.keep_last_checkpoints == 2
+    assert cfg.n_hidden == 64
+    assert cfg.device == "cuda:0"
+
+    pipeline_cfg = DiffusionTrainingPipelineConfig(**dict(cfg))
+    assert (Path(pipeline_cfg.output_root) / "tensorboard") == Path("logs/custom_root/tensorboard")
 
 
 def test_resolve_training_device_auto_falls_back_to_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -120,8 +121,8 @@ def test_training_pipeline_uses_cpu_tensor_factory(
 
     stage_calls = {"count": 0}
 
-    def fake_run_stage(self: object, *, phase: str, **kwargs: object) -> list[Path]:
-        del self, phase, kwargs
+    def fake_run_stage(self: object, p: object) -> list[Path]:
+        del self, p
         stage_calls["count"] += 1
         return []
 

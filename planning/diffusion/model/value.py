@@ -10,7 +10,7 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from .utils import TemporalValueNet
+from .nn import TemporalValueNet
 
 _DEFAULT_DIM = 32
 _DEFAULT_DIM_MULTS = (1, 2, 4, 8)

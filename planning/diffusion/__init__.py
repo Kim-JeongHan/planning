@@ -1,8 +1,7 @@
 """Local minimal diffuser compatibility layer used by planning.
 
-This package intentionally implements only the interfaces required by
-``DiffusionGuidedSampler`` while keeping the public surface similar to the
-external ``diffuser`` dependency originally referenced by the project.
+This package intentionally provides a minimal local diffuser-compatible surface
+for checkpoint loading, sampling, and training workflows.
 """
 
 from __future__ import annotations

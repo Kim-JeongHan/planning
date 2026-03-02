@@ -2,23 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 import torch  # type: ignore
 
+from ..config import CheckpointConfig
 from ..core import PlannerStateNormalizer
-
-
-@dataclass(frozen=True)
-class CheckpointConfig:
-    """Shared checkpoint configuration."""
-
-    dataset: str
-    horizon: int
-    n_diffusion_steps: int
-    root: str | Path = "logs"
-    discount: float | None = None
 
 
 class CheckpointPathManager:
@@ -27,29 +16,14 @@ class CheckpointPathManager:
     def __init__(self, config: CheckpointConfig) -> None:
         self.config = config
 
-    @staticmethod
-    def build_checkpoint_prefix(
-        kind: str,
-        *,
-        dataset: str,
-        horizon: int,
-        n_diffusion_steps: int,
-        discount: float | None = None,
-    ) -> str:
-        if kind == "diffusion":
-            return f"diffusion/defaults_H{int(horizon)}_T{int(n_diffusion_steps)}"
-        if discount is None:
-            discount = 1.0
-        return f"values/defaults_H{int(horizon)}_T{int(n_diffusion_steps)}_d{float(discount)}"
-
     def checkpoint_root(self, kind: str) -> Path:
-        prefix = self.build_checkpoint_prefix(
-            kind,
-            dataset=self.config.dataset,
-            horizon=self.config.horizon,
-            n_diffusion_steps=self.config.n_diffusion_steps,
-            discount=self.config.discount,
-        )
+        horizon = int(self.config.horizon)
+        n_steps = int(self.config.n_diffusion_steps)
+        if kind == "diffusion":
+            prefix = f"diffusion/defaults_H{horizon}_T{n_steps}"
+        else:
+            discount = 1.0 if self.config.discount is None else float(self.config.discount)
+            prefix = f"values/defaults_H{horizon}_T{n_steps}_d{discount}"
         return Path(self.config.root) / self.config.dataset / prefix
 
     def checkpoint_path(self, kind: str, epoch: int) -> Path:
