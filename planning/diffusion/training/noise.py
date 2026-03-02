@@ -129,7 +129,9 @@ class DiffusionSchedule:
         random = np.random.default_rng() if rng is None else rng
         return random.integers(0, self.n_diffusion_steps, size=int(batch_size))
 
-    def q_sample(self, x_start: np.ndarray, t: np.ndarray, noise: np.ndarray | None = None) -> np.ndarray:
+    def q_sample(
+        self, x_start: np.ndarray, t: np.ndarray, noise: np.ndarray | None = None
+    ) -> np.ndarray:
         t_idx = np.asarray(t, dtype=int).reshape(-1)
         if noise is None:
             noise = np.random.normal(size=x_start.shape)

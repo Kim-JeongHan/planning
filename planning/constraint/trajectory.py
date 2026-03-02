@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 import numpy as np
 
 from planning.collision import CollisionChecker
@@ -13,7 +15,9 @@ def _within_tolerance(
     tolerance: float,
 ) -> bool:
     """Check whether a point is within Euclidean tolerance of a target state."""
-    return target_state is None or np.linalg.norm(point - target_state[:3], ord=2) <= tolerance
+    return target_state is None or bool(
+        np.linalg.norm(point - target_state[:3], ord=2) <= tolerance
+    )
 
 
 def _is_collision_free_path(
@@ -28,7 +32,7 @@ def _is_collision_free_path(
             end,
             resolution=segment_resolution,
         )
-        for start, end in zip(points[:-1], points[1:])
+        for start, end in pairwise(points)
     )
 
 

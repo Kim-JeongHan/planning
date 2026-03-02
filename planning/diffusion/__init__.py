@@ -1,8 +1,7 @@
 """Local minimal diffuser compatibility layer used by planning.
 
-This package intentionally implements only the interfaces required by
-``DiffusionGuidedSampler`` while keeping the public surface similar to the
-external ``diffuser`` dependency originally referenced by the project.
+This package intentionally provides a minimal local diffuser-compatible surface
+for checkpoint loading, sampling, and training workflows.
 """
 
 from __future__ import annotations
@@ -16,20 +15,23 @@ from .sampling import (
     ModelPredictor,
     ValueGuide,
 )
-from .training.checkpoint import CheckpointConfig, CheckpointPathManager, CheckpointWriter
+from .training.checkpoint import (
+    CheckpointConfig,
+    CheckpointLoader,
+    CheckpointManager,
+    CheckpointWriter,
+)
 from .training.trainer import DiffusionTrainingPipeline
 from .utils import (
-    CheckpointCatalog,
     Config,
     DiffusionArtifactLoader,
-    TemplatingContextResolver,
     check_compatibility,
 )
 
 __all__ = [
-    "CheckpointCatalog",
     "CheckpointConfig",
-    "CheckpointPathManager",
+    "CheckpointLoader",
+    "CheckpointManager",
     "CheckpointWriter",
     "ConditionAdapter",
     "Config",
@@ -39,7 +41,6 @@ __all__ = [
     "GuidancePolicy",
     "GuidedPolicy",
     "ModelPredictor",
-    "TemplatingContextResolver",
     "ValueGuide",
     "check_compatibility",
     "extract_trajectory_observations",

@@ -116,12 +116,12 @@ class RRG(RRGBase):
                         cost = neighbor_node.distance_to(new_node)
                         self.graph.add_edge(neighbor_node, new_node, cost)
 
-                        # Check if goal is reached
-                        if self._is_goal_reached(new_node):
-                            self.goal_node = new_node
-                            print(f"Goal reached in {iteration + 1} iterations!")
-                            self.path = self.astar.search(self.root, self.goal_node)
-                            return self.path
+                # Check if goal is reached (outside neighbor loop)
+                if self._is_goal_reached(new_node):
+                    self.goal_node = new_node
+                    print(f"Goal reached in {iteration + 1} iterations!")
+                    self.path = self.astar.search(self.root, self.goal_node)
+                    return self.path
 
         return None
 

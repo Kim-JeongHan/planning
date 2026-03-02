@@ -1,62 +1,77 @@
-"""Minimal training loop for local diffusion/value models."""
+"""Training orchestrator for local diffusion/value models."""
 
 from __future__ import annotations
 
 import contextlib
+import logging
+from collections import deque
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Protocol, cast
 
 import numpy as np
 import torch  # type: ignore
+from torch.utils.tensorboard import SummaryWriter  # type: ignore
 from tqdm import tqdm
 
-from ..config import DiffusionTrainingPipelineConfig
+from ..config import DiffusionTrainingConfig
+from ..core import PlannerStateNormalizer
 from ..model import DiffusionModel, ValueModel
 from .checkpoint import (
-    CheckpointConfig,
-    CheckpointPathManager,
-    CheckpointWriter,
+    CheckpointManager,
 )
-from .config import DiffusionTrainingConfig
-from .dataset import TorchTensorFactory, TrajectoryDataSetSource, TrajectoryLoadConfig
-from .diffusion_trainer import DiffusionEpochTrainer, EMAAccumulator
+from .dataset import TorchTensorFactory, TrajectoryDataSetSource
+from .epoch_trainer import DiffusionEpochTrainer, EMAAccumulator, ValueEpochTrainer
 from .noise import DiffusionSchedule
-from .value_trainer import ValueEpochTrainer
+
+_LOGGER = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Stage parameter bundle
+# ---------------------------------------------------------------------------
 
 
-def _log_every(epochs: int, target_ticks: int = 20) -> int:
-    """Return logging frequency for long epoch runs."""
-    if epochs <= 1:
-        return 1
-    return max(1, min(epochs // target_ticks, 100))
+@dataclass
+class _StageParams:
+    phase: str
+    epoch_trainer: object
+    model: object
+    optimizer: object
+    ema: object
+    effective_epochs: int
+    patience: int | None
+    min_delta: float
+    log_every: int
+    config: object
+    normalizer: PlannerStateNormalizer
+    checkpoint_manager: object
+    train_loader: object
+    val_loader: object | None
+    summary_writer: object | None
+    checkpoint_every: int
+    latest_checkpoint_every: int
+    keep_last_checkpoints: int
+    extra_meta: dict[str, object] | None = field(default=None)
 
 
-def _coerce_log_every(epochs: int, log_every: int | None) -> int:
-    if log_every is None or log_every <= 0:
-        return _log_every(epochs)
-    return max(1, int(log_every))
+class _SupportsAddText(Protocol):
+    def add_text(self, tag: str, text: str, global_step: int) -> object: ...
 
 
-def _create_summary_writer(log_dir: str | None) -> object | None:
-    """Create a TensorBoard summary writer if requested."""
-    if log_dir is None:
-        return None
+class _SupportsEpochCalls(Protocol):
+    def train_epoch(self, loader: object) -> float: ...
 
-    try:
-        from torch.utils.tensorboard import SummaryWriter  # type: ignore
-    except Exception as exc:  # pragma: no cover - runtime optional dependency
-        raise ImportError(
-            "TensorBoard is required for summary logging. "
-            "Install it in your environment before enabling --tensorboard-log-dir."
-        ) from exc
-
-    writer_dir = Path(log_dir)
-    writer_dir.mkdir(parents=True, exist_ok=True)
-    return SummaryWriter(log_dir=str(writer_dir))
+    def evaluate_epoch(self, loader: object) -> float: ...
 
 
-def _log_scalar(writer: object | None, tag: str, value: float, step: int) -> None:
-    if writer is not None:
-        writer.add_scalar(tag, float(value), step)
+class _SupportsStateDict(Protocol):
+    def state_dict(self) -> dict[str, object]: ...
+
+
+# ---------------------------------------------------------------------------
+# Loss tracker with early-stop support
+# ---------------------------------------------------------------------------
 
 
 class EpochLossTracker:
@@ -89,335 +104,355 @@ class EpochLossTracker:
         return self.no_improve >= self.patience
 
 
+# ---------------------------------------------------------------------------
+# Main pipeline
+# ---------------------------------------------------------------------------
+
+
 class DiffusionTrainingPipeline:
-    """Orchestrator object for diffusion/value training workflow."""
+    """Orchestrator for diffusion/value training workflow."""
 
     def __init__(self, **values: object) -> None:
-        self.cfg = DiffusionTrainingPipelineConfig(**values)
+        self.cfg = DiffusionTrainingConfig(**values)
 
-    def run(self) -> list[Path]:  # noqa: C901
+    def run(self) -> list[Path]:
         cfg = self.cfg
 
         if cfg.seed is not None:
             torch.manual_seed(cfg.seed)
             np.random.seed(cfg.seed)
 
-        training_device = _resolve_training_device(cfg.device)
-        print(f"[info] Training device: {training_device}")
+        device = torch.device(cfg.device)
+        _LOGGER.info("Training device: %s", device)
 
-        summary_writer = _create_summary_writer(cfg.tensorboard_log_dir)
+        writer_dir = Path(cfg.output_path) / "tensorboard"
+        writer_dir.mkdir(parents=True, exist_ok=True)
+        summary_writer = SummaryWriter(log_dir=str(writer_dir))
 
-        dataset_key = Path(cfg.dataset).stem
-        if dataset_key == "":
-            dataset_key = "dataset"
+        try:
+            trajectories, normalizer = self._load_and_prepare_dataset()
+            config = self.cfg
+            train_loader, val_loader = self._build_data_loaders(trajectories, normalizer, config)
+            checkpoint_manager = self._build_checkpoint_manager(config)
 
-        dataset_source = TrajectoryDataSetSource(
-            TrajectoryLoadConfig(
-                path=cfg.dataset,
-                horizon=cfg.horizon,
-                state_dim=cfg.state_dim,
-                seed=cfg.seed,
-            )
-        )
-        sequences = dataset_source.load()
-        horizon = cfg.horizon
+            if summary_writer is not None:
+                _log_config_summary(summary_writer, config)
+
+            all_ckpts: list[Path] = []
+
+            if cfg.train_diffusion:
+                all_ckpts += self._run_diffusion_stage(
+                    config=config,
+                    normalizer=normalizer,
+                    train_loader=train_loader,
+                    val_loader=val_loader,
+                    checkpoint_manager=checkpoint_manager,
+                    summary_writer=summary_writer,
+                    training_device=device,
+                )
+
+            if cfg.train_value:
+                all_ckpts += self._run_value_stage(
+                    config=config,
+                    normalizer=normalizer,
+                    train_loader=train_loader,
+                    val_loader=val_loader,
+                    checkpoint_manager=checkpoint_manager,
+                    summary_writer=summary_writer,
+                    training_device=device,
+                )
+        finally:
+            if summary_writer is not None:
+                summary_writer.close()
+
+        return [path for path in all_ckpts if path.exists()]
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _load_and_prepare_dataset(
+        self,
+    ) -> tuple[torch.Tensor, PlannerStateNormalizer]:
+        """Load raw sequences, validate configured horizon, and fit normalizer."""
+        cfg = self.cfg
+
+        trajectory_config = cfg.to_trajectory_config()
+        horizon = trajectory_config.horizon
         if horizon is None:
-            inferred_horizon = max(
-                (
-                    trajectory.shape[0]
-                    for trajectory in sequences
-                    if trajectory.ndim == 2 and trajectory.shape[1] == cfg.state_dim
-                ),
-                default=None,
-            )
-            if inferred_horizon is None:
-                raise ValueError(
-                    f"No valid trajectory with state_dim={cfg.state_dim} found in dataset: {cfg.dataset}"
-                )
-            print(f"[info] --horizon omitted. Using inferred horizon={inferred_horizon}.")
-            horizon = inferred_horizon
-            dataset_source = TrajectoryDataSetSource(
-                TrajectoryLoadConfig(
-                    path=cfg.dataset,
-                    horizon=horizon,
-                    state_dim=cfg.state_dim,
-                    seed=cfg.seed,
-                )
-            )
+            raise ValueError("horizon must be provided in training config.")
 
-        config = DiffusionTrainingConfig.from_pipeline_config(
-            self.cfg,
-            horizon=horizon,
-            dataset_name=dataset_key,
-            coerce_lr_schedule=_coerce_lr_schedule,
-        )
+        source = TrajectoryDataSetSource(trajectory_config)
+        trajectories = source.to_trajectories()
 
-        checkpoint_every, keep_last_checkpoints = _coerce_checkpoint_policy(
-            config.checkpoint_every,
-            config.keep_last_checkpoints,
+        _LOGGER.info(
+            "Loaded %d trajectories (horizon=%d, state_dim=%d).",
+            trajectories.shape[0],
+            horizon,
+            cfg.state_dim,
         )
-        validation_split = _coerce_validation_split(config.validation_split)
-        latest_checkpoint_every = _coerce_latest_checkpoint_every(
-            config.latest_checkpoint_every
-        )
+        normalizer = PlannerStateNormalizer.fit(trajectories)
+        return trajectories, normalizer
 
-        trajectories = dataset_source.to_normalized_numpy(trajectories=sequences)
-        if trajectories.shape[0] == 0:
-            raise ValueError("No valid trajectory data found.")
-        print(
-            "[info] Loaded "
-            f"{trajectories.shape[0]} trajectories, horizon={config.horizon}, "
-            f"state_dim={config.state_dim}"
-        )
-
-        normalizer = DiffusionTrainingConfig._derive_normalizer(trajectories)
+    def _build_data_loaders(
+        self,
+        trajectories: torch.Tensor,
+        normalizer: PlannerStateNormalizer,
+        config: DiffusionTrainingConfig,
+    ) -> tuple[object, object | None]:
         tensor_factory = TorchTensorFactory(normalizer)
         obs_t, cond_t = tensor_factory.to_torch_tensors(trajectories)
         dataset_tensors = torch.utils.data.TensorDataset(obs_t, cond_t)
-        train_loader, val_loader = _build_dataloaders(
-            dataset_tensors=dataset_tensors,
-            batch_size=config.batch_size,
-            validation_split=validation_split,
-            seed=cfg.seed,
-        )
-        schedule_name = config.lr_schedule
-        print(
-            "[info] Training schedule: "
-            f"{schedule_name} (lr={config.learning_rate}, step_size={config.lr_step_size}, "
-            f"gamma={config.lr_gamma}, lr_min={config.lr_min})"
-        )
-
-        checkpoint_config = CheckpointConfig(
-            dataset=dataset_key,
-            horizon=config.horizon,
-            n_diffusion_steps=config.n_diffusion_steps,
-            root=cfg.output_root,
-            discount=config.discount,
-        )
-        checkpoint_writer = CheckpointWriter(CheckpointPathManager(checkpoint_config))
-
-        diffusion_patience, diffusion_min_delta = _coerce_stop_arguments(
-            patience=config.diffusion_patience,
-            min_delta=config.diffusion_min_delta,
-            name="diffusion",
-        )
-        value_patience, value_min_delta = _coerce_stop_arguments(
-            patience=config.value_patience, min_delta=config.value_min_delta, name="value"
-        )
-
-        if summary_writer is not None:
-            summary_writer.add_text(
-                "training/config",
-                (
-                    f"dataset={config.dataset}\n"
-                    f"horizon={config.horizon}\n"
-                    f"state_dim={config.state_dim}\n"
-                    f"n_diffusion_steps={config.n_diffusion_steps}\n"
-                    f"batch_size={config.batch_size}\n"
-                    f"learning_rate={config.learning_rate}\n"
-                    f"lr_schedule={config.lr_schedule}\n"
-                    f"epochs={config.epochs}\n"
-                    f"seed={cfg.seed}\n"
-                    f"checkpoint_every={checkpoint_every}\n"
-                    f"keep_last_checkpoints={keep_last_checkpoints}\n"
+        validation_split = float(config.validation_split)
+        if validation_split <= 0.0:
+            return (
+                torch.utils.data.DataLoader(
+                    dataset_tensors, batch_size=config.batch_size, shuffle=True
                 ),
-                0,
+                None,
             )
 
-        all_ckpts: list[Path] = []
-
-        if cfg.train_diffusion:
-            effective_diffusion_epochs = config.epochs
-            if config.diffusion_max_epochs is not None:
-                effective_diffusion_epochs = min(
-                    effective_diffusion_epochs, config.diffusion_max_epochs
-                )
-            if effective_diffusion_epochs <= 0:
-                raise ValueError("diffusion_max_epochs / epochs must be at least 1.")
-            diffusion_model = DiffusionModel(
-                state_dim=config.state_dim,
-                horizon=config.horizon,
-                n_diffusion_steps=config.n_diffusion_steps,
-                dim=config.n_hidden,
-            ).to(training_device)
-            # Cosine noise schedule (Nichol & Dhariwal 2021) as used in the paper.
-            schedule = DiffusionSchedule.cosine(n_diffusion_steps=config.n_diffusion_steps)
-            diffusion_optimizer = torch.optim.AdamW(
-                diffusion_model.parameters(), lr=config.learning_rate
+        dataset_size = len(dataset_tensors)
+        num_val = int(dataset_size * validation_split)
+        if num_val < 1 or num_val >= dataset_size:
+            return (
+                torch.utils.data.DataLoader(
+                    dataset_tensors, batch_size=config.batch_size, shuffle=True
+                ),
+                None,
             )
-            diffusion_ema = EMAAccumulator(diffusion_model)
-            diffusion_epoch_trainer = DiffusionEpochTrainer(
-                model=diffusion_model,
-                optimizer=diffusion_optimizer,
-                schedule=schedule,
-                ema=diffusion_ema,
-            )
-            diffuse_log_every = _coerce_log_every(effective_diffusion_epochs, cfg.log_every)
-            diffusion_ckpts = self._run_stage(
-                phase="diffusion",
-                epoch_trainer=diffusion_epoch_trainer,
-                model=diffusion_model,
-                optimizer=diffusion_optimizer,
-                ema=diffusion_ema,
-                effective_epochs=effective_diffusion_epochs,
-                patience=diffusion_patience,
-                min_delta=diffusion_min_delta,
-                log_every=diffuse_log_every,
-                config=config,
-                dataset_key=dataset_key,
-                normalizer=normalizer,
-                checkpoint_writer=checkpoint_writer,
-                train_loader=train_loader,
-                val_loader=val_loader,
-                summary_writer=summary_writer,
-                checkpoint_every=checkpoint_every,
-                latest_checkpoint_every=latest_checkpoint_every,
-                keep_last_checkpoints=keep_last_checkpoints,
-            )
-            all_ckpts.extend(diffusion_ckpts)
 
-        if cfg.train_value:
-            effective_value_epochs = config.epochs
-            if config.value_max_epochs is not None and config.value_max_epochs < 0:
-                raise ValueError("value_max_epochs must be >= 0.")
-            if config.value_max_epochs is not None:
-                effective_value_epochs = min(effective_value_epochs, config.value_max_epochs)
-            if effective_value_epochs >= 1:
-                value_model = ValueModel(
-                    state_dim=config.state_dim,
-                    horizon=config.horizon,
-                    dim=config.n_hidden,
-                ).to(training_device)
-                value_optimizer = torch.optim.AdamW(
-                    value_model.parameters(), lr=config.learning_rate
-                )
-                value_ema = EMAAccumulator(value_model)
-                value_epoch_trainer = ValueEpochTrainer(
-                    model=value_model,
-                    optimizer=value_optimizer,
-                    normalizer=normalizer,
-                    ema=value_ema,
-                )
-                value_log_every = _coerce_log_every(effective_value_epochs, cfg.log_every)
-                value_ckpts = self._run_stage(
-                    phase="value",
-                    epoch_trainer=value_epoch_trainer,
-                    model=value_model,
-                    optimizer=value_optimizer,
-                    ema=value_ema,
-                    effective_epochs=effective_value_epochs,
-                    patience=value_patience,
-                    min_delta=value_min_delta,
-                    log_every=value_log_every,
-                    config=config,
-                    dataset_key=dataset_key,
-                    normalizer=normalizer,
-                    checkpoint_writer=checkpoint_writer,
-                    train_loader=train_loader,
-                    val_loader=val_loader,
-                    summary_writer=summary_writer,
-                    checkpoint_every=checkpoint_every,
-                    latest_checkpoint_every=latest_checkpoint_every,
-                    keep_last_checkpoints=keep_last_checkpoints,
-                    extra_meta={"discount": config.discount},
-                )
-                all_ckpts.extend(value_ckpts)
+        generator = (
+            torch.Generator().manual_seed(self.cfg.seed) if self.cfg.seed is not None else None
+        )
+        train_subset, val_subset = torch.utils.data.random_split(
+            dataset_tensors,
+            [dataset_size - num_val, num_val],
+            generator=generator,
+        )
+        return (
+            torch.utils.data.DataLoader(train_subset, batch_size=config.batch_size, shuffle=True),
+            torch.utils.data.DataLoader(val_subset, batch_size=config.batch_size, shuffle=False),
+        )
 
-        if summary_writer is not None:
-            summary_writer.close()
-        return [path for path in all_ckpts if path.exists()]
+    def _build_checkpoint_manager(self, config: DiffusionTrainingConfig) -> CheckpointManager:
+        checkpoint_config = config.to_checkpoint_config()
+        return CheckpointManager(checkpoint_config)
 
-    def _run_stage(
+    def _build_common_stage_params(
         self,
         *,
         phase: str,
-        epoch_trainer: object,
         model: object,
+        epoch_trainer: object,
         optimizer: object,
         ema: EMAAccumulator,
         effective_epochs: int,
         patience: int | None,
         min_delta: float,
-        log_every: int,
         config: DiffusionTrainingConfig,
-        dataset_key: str,
-        normalizer: object,
-        checkpoint_writer: CheckpointWriter,
+        normalizer: PlannerStateNormalizer,
         train_loader: object,
         val_loader: object | None,
+        checkpoint_manager: CheckpointManager,
         summary_writer: object | None,
-        checkpoint_every: int,
-        latest_checkpoint_every: int,
-        keep_last_checkpoints: int,
         extra_meta: dict[str, object] | None = None,
+    ) -> _StageParams:
+        return _StageParams(
+            phase=phase,
+            epoch_trainer=epoch_trainer,
+            model=model,
+            optimizer=optimizer,
+            ema=ema,
+            effective_epochs=effective_epochs,
+            patience=patience,
+            min_delta=min_delta,
+            log_every=_coerce_log_every(effective_epochs, self.cfg.log_every),
+            config=config,
+            normalizer=normalizer,
+            checkpoint_manager=checkpoint_manager,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            summary_writer=summary_writer,
+            checkpoint_every=config.checkpoint_every,
+            latest_checkpoint_every=config.latest_checkpoint_every,
+            keep_last_checkpoints=config.keep_last_checkpoints,
+            extra_meta=extra_meta,
+        )
+
+    def _run_diffusion_stage(
+        self,
+        *,
+        config: DiffusionTrainingConfig,
+        normalizer: PlannerStateNormalizer,
+        train_loader: object,
+        val_loader: object | None,
+        checkpoint_manager: CheckpointManager,
+        summary_writer: object | None,
+        training_device: torch.device,
     ) -> list[Path]:
+        effective_epochs = config.epochs
+        if config.diffusion_max_epochs is not None:
+            effective_epochs = min(effective_epochs, config.diffusion_max_epochs)
+        if effective_epochs <= 0:
+            raise ValueError("diffusion_max_epochs / epochs must be at least 1.")
+
+        model = DiffusionModel(
+            state_dim=config.state_dim,
+            horizon=config.horizon,
+            n_diffusion_steps=config.n_diffusion_steps,
+            dim=config.n_hidden,
+        ).to(training_device)
+        schedule = DiffusionSchedule.cosine(n_diffusion_steps=config.n_diffusion_steps)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
+        ema = EMAAccumulator(model)
+        epoch_trainer = DiffusionEpochTrainer(
+            model=model, optimizer=optimizer, schedule=schedule, ema=ema
+        )
+        patience = config.diffusion_patience
+        min_delta = float(config.diffusion_min_delta)
+        _LOGGER.info(
+            "LR schedule: %s (lr=%.4g, step_size=%d, gamma=%.3g, lr_min=%.4g)",
+            config.lr_schedule,
+            config.learning_rate,
+            config.lr_step_size,
+            config.lr_gamma,
+            config.lr_min,
+        )
+        params = self._build_common_stage_params(
+            phase="diffusion",
+            model=model,
+            epoch_trainer=epoch_trainer,
+            optimizer=optimizer,
+            ema=ema,
+            effective_epochs=effective_epochs,
+            patience=patience,
+            min_delta=min_delta,
+            config=config,
+            normalizer=normalizer,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            checkpoint_manager=checkpoint_manager,
+            summary_writer=summary_writer,
+        )
+        return self._run_stage(params)
+
+    def _run_value_stage(
+        self,
+        *,
+        config: DiffusionTrainingConfig,
+        normalizer: PlannerStateNormalizer,
+        train_loader: object,
+        val_loader: object | None,
+        checkpoint_manager: CheckpointManager,
+        summary_writer: object | None,
+        training_device: torch.device,
+    ) -> list[Path]:
+        effective_epochs = config.epochs
+        if config.value_max_epochs is not None:
+            if config.value_max_epochs < 0:
+                raise ValueError("value_max_epochs must be >= 0.")
+            effective_epochs = min(effective_epochs, config.value_max_epochs)
+        if effective_epochs < 1:
+            return []
+
+        model = ValueModel(
+            state_dim=config.state_dim,
+            horizon=config.horizon,
+            dim=config.n_hidden,
+        ).to(training_device)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
+        ema = EMAAccumulator(model)
+        epoch_trainer = ValueEpochTrainer(
+            model=model, optimizer=optimizer, normalizer=normalizer, ema=ema
+        )
+        patience = config.value_patience
+        min_delta = float(config.value_min_delta)
+        params = self._build_common_stage_params(
+            phase="value",
+            model=model,
+            epoch_trainer=epoch_trainer,
+            optimizer=optimizer,
+            ema=ema,
+            effective_epochs=effective_epochs,
+            patience=patience,
+            min_delta=min_delta,
+            config=config,
+            normalizer=normalizer,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            checkpoint_manager=checkpoint_manager,
+            summary_writer=summary_writer,
+            extra_meta={"discount": config.discount},
+        )
+        return self._run_stage(params)
+
+    def _run_stage(self, p: _StageParams) -> list[Path]:
+        config = cast(DiffusionTrainingConfig, p.config)
+        checkpoint_manager = cast(CheckpointManager, p.checkpoint_manager)
         ckpts: list[Path] = []
-        tracker = EpochLossTracker(min_delta=min_delta, patience=patience)
-        recent_ckpts: list[Path] = []
+        tracker = EpochLossTracker(min_delta=p.min_delta, patience=p.patience)
+        recent_ckpts: deque[Path] = deque()
+        latest_ckpt = checkpoint_manager.latest(p.phase)
+        best_ckpt = checkpoint_manager.best(p.phase)
         bar = tqdm(
-            range(1, effective_epochs + 1),
-            desc=f"{phase.title()} training",
+            range(1, p.effective_epochs + 1),
+            desc=f"{p.phase.title()} training",
             unit="epoch",
         )
-        latest_ckpt = checkpoint_writer.path_manager.latest(phase)
-        best_ckpt = checkpoint_writer.path_manager.best(phase)
+
         for epoch in bar:
             current_lr = _learning_rate_for_epoch(
                 config.learning_rate,
                 config.lr_schedule,
                 epoch,
-                total_epochs=effective_epochs,
+                total_epochs=p.effective_epochs,
                 step_size=config.lr_step_size,
                 gamma=config.lr_gamma,
                 lr_min=config.lr_min,
             )
-            _set_learning_rate(optimizer, current_lr)
+            _set_learning_rate(p.optimizer, current_lr)
             train_loss, val_loss, metric_loss = _run_epoch_with_validation(
-                epoch_trainer, train_loader, val_loader
+                p.epoch_trainer, p.train_loader, p.val_loader
             )
             is_new_best, delta = tracker.update(metric_loss, epoch)
-            best_tag = " [new best]" if is_new_best else ""
             bar.set_postfix(
                 {
-                    "train_loss": f"{train_loss:.4f}",
-                    "val_loss": "n/a" if val_loss is None else f"{val_loss:.4f}",
-                    "best": f"{tracker.best_loss:.4f}",
-                    "delta": delta,
+                    "train": f"{train_loss:.4f}",
+                    "val": "n/a" if val_loss is None else f"{val_loss:.4f}",
+                    "best": f"{tracker.best_loss:.4f}",  # always set after first update
+                    "Δ": delta,
                     "lr": _format_lr(current_lr),
                 }
             )
-            if epoch % log_every == 0 or epoch == 1 or epoch == effective_epochs:
+            if epoch % p.log_every == 0 or epoch == 1 or epoch == p.effective_epochs:
                 best_label = (
                     ""
                     if tracker.best_loss is None
-                    else (
-                        f" best={tracker.best_loss:.6f} "
-                        f"(epoch={tracker.best_epoch})"
-                    )
+                    else f" best={tracker.best_loss:.6f} (epoch={tracker.best_epoch})"
                 )
-                print(
-                    f"[{phase}] epoch {epoch}/{effective_epochs} "
-                    f"train_loss={train_loss:.6f} "
-                    f"val_loss={'n/a' if val_loss is None else f'{val_loss:.6f}'} "
-                    f"lr={current_lr:.6f} "
-                    f"delta={delta}{best_label}{best_tag}"
+                _LOGGER.info(
+                    "[%s] epoch %d/%d  train=%.6f  val=%s  lr=%.6f  Δ=%s%s%s",
+                    p.phase,
+                    epoch,
+                    p.effective_epochs,
+                    train_loss,
+                    "n/a" if val_loss is None else f"{val_loss:.6f}",
+                    current_lr,
+                    delta,
+                    best_label,
+                    " [new best]" if is_new_best else "",
                 )
-            _log_scalar(summary_writer, f"{phase}/loss", train_loss, epoch)
+            _log_scalar(p.summary_writer, f"{p.phase}/loss", train_loss, epoch)
             if val_loss is not None:
-                _log_scalar(summary_writer, f"{phase}/val_loss", val_loss, epoch)
-            _log_scalar(summary_writer, f"{phase}/lr", current_lr, epoch)
+                _log_scalar(p.summary_writer, f"{p.phase}/val_loss", val_loss, epoch)
+            _log_scalar(p.summary_writer, f"{p.phase}/lr", current_lr, epoch)
             if tracker.best_loss is not None:
-                _log_scalar(summary_writer, f"{phase}/best_loss", tracker.best_loss, epoch)
+                _log_scalar(p.summary_writer, f"{p.phase}/best_loss", tracker.best_loss, epoch)
+
             _manage_stage_checkpoints(
-                phase=phase,
+                p,
                 epoch=epoch,
-                total_epochs=effective_epochs,
-                model=model,
-                ema=ema,
-                normalizer=normalizer,
-                checkpoint_writer=checkpoint_writer,
-                config=config,
-                dataset_key=dataset_key,
                 metric_loss=metric_loss,
                 train_loss=train_loss,
                 is_new_best=is_new_best,
@@ -425,167 +460,78 @@ class DiffusionTrainingPipeline:
                 ckpt_paths=ckpts,
                 latest_ckpt=latest_ckpt,
                 best_ckpt=best_ckpt,
-                checkpoint_every=checkpoint_every,
-                latest_checkpoint_every=latest_checkpoint_every,
-                keep_last_checkpoints=keep_last_checkpoints,
-                extra_meta=extra_meta,
             )
 
             if tracker.should_stop():
-                print(
-                    f"[early-stop][{phase}] Stopping at epoch {epoch}/{effective_epochs} "
-                    f"due to no improvement for {tracker.no_improve} epochs."
+                _LOGGER.info(
+                    "[early-stop][%s] Stopping at epoch %d/%d " "(no improvement for %d epochs).",
+                    p.phase,
+                    epoch,
+                    p.effective_epochs,
+                    tracker.no_improve,
                 )
                 break
 
-        print(
-            f"[summary][{phase}] best epoch="
-            f"{'n/a' if tracker.best_epoch is None else tracker.best_epoch}, "
-            f"best loss={tracker.best_loss:.6f}"
+        _LOGGER.info(
+            "[%s] Done. best_epoch=%s  best_loss=%.6f",
+            p.phase,
+            "n/a" if tracker.best_epoch is None else tracker.best_epoch,
+            tracker.best_loss or 0.0,
         )
         bar.close()
         return [path for path in ckpts if path.exists()]
 
 
-def _coerce_lr_schedule(
-    schedule: str, *, step_size: int, gamma: float, lr_min: float
-) -> str:
-    schedule = schedule.strip().lower()
-    if schedule not in {"constant", "step", "cosine"}:
-        raise ValueError(
-            "Unsupported lr-schedule. Choose one of: constant, step, cosine."
-        )
-    if schedule == "step" and step_size <= 0:
-        raise ValueError("lr_step_size must be positive when lr_schedule='step'.")
-    if not 0.0 < gamma < 1.0 and schedule == "step":
-        raise ValueError("lr_gamma must be in the interval (0, 1) for lr_schedule='step'.")
-    if lr_min < 0:
-        raise ValueError("lr_min must be non-negative.")
-    return schedule
+# ---------------------------------------------------------------------------
+# Module-level helpers
+# ---------------------------------------------------------------------------
 
 
-def _coerce_stop_arguments(
-    *, patience: int | None, min_delta: float, name: str
-) -> tuple[int | None, float]:
-    if patience is not None and patience < 1:
-        raise ValueError(f"{name}_patience must be >= 1 when enabled.")
-    if min_delta < 0.0:
-        raise ValueError(f"{name}_min_delta must be >= 0.")
-    return patience, float(min_delta)
+def _log_every(epochs: int, target_ticks: int = 20) -> int:
+    if epochs <= 1:
+        return 1
+    return max(1, min(epochs // target_ticks, 100))
 
 
-def _coerce_checkpoint_policy(
-    checkpoint_every: int, keep_last_checkpoints: int
-) -> tuple[int, int]:
-    if checkpoint_every < 0:
-        raise ValueError("checkpoint_every must be >= 0.")
-    if keep_last_checkpoints < 0:
-        raise ValueError("keep_last_checkpoints must be >= 0.")
-    return int(checkpoint_every), int(keep_last_checkpoints)
+def _coerce_log_every(epochs: int, log_every: int | None) -> int:
+    if log_every is None or log_every <= 0:
+        return _log_every(epochs)
+    return max(1, int(log_every))
 
 
-def _coerce_validation_split(validation_split: float) -> float:
-    if not 0.0 <= float(validation_split) < 1.0:
-        raise ValueError("validation_split must be in [0.0, 1.0).")
-    return float(validation_split)
+def _log_scalar(writer: object | None, tag: str, value: float, step: int) -> None:
+    if writer is None or not hasattr(writer, "add_scalar"):
+        return
+    add_scalar = cast(Callable[[str, float, int], object], writer.add_scalar)
+    add_scalar(tag, float(value), step)
 
 
-def _coerce_latest_checkpoint_every(latest_checkpoint_every: int) -> int:
-    if latest_checkpoint_every < 0:
-        raise ValueError("latest_checkpoint_every must be >= 0.")
-    return int(latest_checkpoint_every)
-
-
-def _resolve_training_device(requested: str | None) -> torch.device:
-    raw = "auto" if requested is None else str(requested).strip()
-    if raw == "" or raw.lower() == "auto":
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        return torch.device("cpu")
-
-    try:
-        device = torch.device(raw)
-    except (TypeError, RuntimeError) as exc:
-        raise ValueError(
-            f"Invalid device {requested!r}. Use one of: auto, cpu, cuda, cuda:<index>."
-        ) from exc
-
-    if device.type == "cuda":
-        if not torch.cuda.is_available():
-            raise ValueError(
-                "CUDA was requested but torch.cuda.is_available() is False. "
-                "Install a CUDA-enabled PyTorch build or choose --device cpu."
-            )
-        if device.index is not None:
-            device_count = torch.cuda.device_count()
-            if device.index < 0 or device.index >= device_count:
-                raise ValueError(
-                    f"Requested CUDA device index {device.index} is out of range "
-                    f"(available count: {device_count})."
-                )
-    return device
+def _log_config_summary(writer: object, config: DiffusionTrainingConfig) -> None:
+    writer_with_text = cast(_SupportsAddText, writer)
+    writer_with_text.add_text(
+        "training/config",
+        (
+            f"dataset={config.dataset}\n"
+            f"horizon={config.horizon}\n"
+            f"state_dim={config.state_dim}\n"
+            f"n_diffusion_steps={config.n_diffusion_steps}\n"
+            f"batch_size={config.batch_size}\n"
+            f"learning_rate={config.learning_rate}\n"
+            f"lr_schedule={config.lr_schedule}\n"
+            f"epochs={config.epochs}\n"
+        ),
+        0,
+    )
 
 
 def _should_save_latest(
-    *,
-    epoch: int,
-    total_epochs: int,
-    checkpoint_every: int,
-    latest_checkpoint_every: int,
+    *, epoch: int, total_epochs: int, checkpoint_every: int, latest_checkpoint_every: int
 ) -> bool:
     if latest_checkpoint_every > 0:
         return epoch % latest_checkpoint_every == 0 or epoch == total_epochs
     if checkpoint_every > 0:
         return epoch % checkpoint_every == 0 or epoch == total_epochs
     return epoch == total_epochs
-
-
-def _build_dataloaders(
-    dataset_tensors: object,
-    batch_size: int,
-    validation_split: float,
-    seed: int | None = None,
-) -> tuple[object, object | None]:
-    train_dataset = dataset_tensors
-    if validation_split <= 0.0:
-        train_loader = torch.utils.data.DataLoader(
-            train_dataset,
-            batch_size=batch_size,
-            shuffle=True,
-        )
-        return train_loader, None
-
-    dataset_size = len(dataset_tensors)
-    num_validation = int(dataset_size * validation_split)
-    if num_validation < 1 or num_validation >= dataset_size:
-        train_loader = torch.utils.data.DataLoader(
-            train_dataset,
-            batch_size=batch_size,
-            shuffle=True,
-        )
-        return train_loader, None
-
-    num_train = dataset_size - num_validation
-    generator = None
-    if seed is not None:
-        generator = torch.Generator().manual_seed(seed)
-
-    train_subset, validation_subset = torch.utils.data.random_split(
-        dataset_tensors,
-        [num_train, num_validation],
-        generator=generator,
-    )
-    train_loader = torch.utils.data.DataLoader(
-        train_subset,
-        batch_size=batch_size,
-        shuffle=True,
-    )
-    validation_loader = torch.utils.data.DataLoader(
-        validation_subset,
-        batch_size=batch_size,
-        shuffle=False,
-    )
-    return train_loader, validation_loader
 
 
 def _learning_rate_for_epoch(
@@ -613,6 +559,8 @@ def _learning_rate_for_epoch(
 
 
 def _set_learning_rate(optimizer: object, lr: float) -> None:
+    if not isinstance(optimizer, torch.optim.Optimizer):
+        return
     for group in optimizer.param_groups:
         group["lr"] = lr
 
@@ -624,22 +572,12 @@ def _format_loss_delta(new: float, old: float | None) -> str:
 
 
 def _format_lr(lr: float) -> str:
-    if lr >= 1e-3:
-        return f"{lr:.4g}"
-    return f"{lr:.3e}"
+    return f"{lr:.4g}" if lr >= 1e-3 else f"{lr:.3e}"
 
 
 def _remove_missing_ok(path: Path) -> None:
     with contextlib.suppress(FileNotFoundError):
         path.unlink()
-
-
-def _prune_kept_checkpoints(kept: list[Path], keep_last: int) -> None:
-    if keep_last <= 0:
-        return
-    while len(kept) > keep_last:
-        stale = kept.pop(0)
-        _remove_missing_ok(stale)
 
 
 def _append_unique(paths: list[Path], value: Path) -> None:
@@ -650,7 +588,6 @@ def _append_unique(paths: list[Path], value: Path) -> None:
 def _build_checkpoint_meta(
     *,
     config: DiffusionTrainingConfig,
-    dataset_key: str,
     epoch: int,
     loss: float,
     extra: dict[str, object] | None = None,
@@ -659,8 +596,8 @@ def _build_checkpoint_meta(
         "horizon": config.horizon,
         "state_dim": config.state_dim,
         "n_diffusion_steps": config.n_diffusion_steps,
-        "dataset": dataset_key,
-        "name": dataset_key,
+        "dataset": config.dataset_key,
+        "name": config.dataset_key,
         "epoch": int(epoch),
         "loss": float(loss),
         "dim": config.n_hidden,
@@ -675,82 +612,73 @@ def _run_epoch_with_validation(
     train_loader: object,
     val_loader: object | None,
 ) -> tuple[float, float | None, float]:
-    train_loss = trainer.train_epoch(train_loader)
-    val_loss = trainer.evaluate_epoch(val_loader) if val_loader is not None else None
-    metric_loss = val_loss if val_loader is not None else train_loss
+    trainer_impl = cast(_SupportsEpochCalls, trainer)
+    train_loss = trainer_impl.train_epoch(train_loader)
+    val_loss = trainer_impl.evaluate_epoch(val_loader) if val_loader is not None else None
+    metric_loss = val_loss if val_loss is not None else train_loss
     return train_loss, val_loss, metric_loss
 
 
 def _manage_stage_checkpoints(
+    p: _StageParams,
     *,
-    phase: str,
     epoch: int,
-    total_epochs: int,
-    model: object,
-    ema: EMAAccumulator,
-    normalizer: object,
-    checkpoint_writer: CheckpointWriter,
-    config: DiffusionTrainingConfig,
-    dataset_key: str,
     metric_loss: float,
     train_loss: float,
     is_new_best: bool,
-    recent_ckpts: list[Path],
+    recent_ckpts: deque[Path],
     ckpt_paths: list[Path],
     latest_ckpt: Path,
     best_ckpt: Path,
-    checkpoint_every: int,
-    latest_checkpoint_every: int,
-    keep_last_checkpoints: int,
-    extra_meta: dict[str, object] | None = None,
 ) -> None:
+    manager = cast(CheckpointManager, p.checkpoint_manager)
+    config = cast(DiffusionTrainingConfig, p.config)
     ema_sd: dict[str, object] | None = None
 
     def _ema_state_dict() -> dict[str, object]:
         nonlocal ema_sd
         if ema_sd is None:
-            ema_sd = ema.state_dict()
+            ema_obj = cast(_SupportsStateDict, p.ema)
+            ema_sd = ema_obj.state_dict()
         return ema_sd
 
-    if checkpoint_every > 0 and epoch % checkpoint_every == 0:
-        periodic_ckpt_path = checkpoint_writer.path_manager.checkpoint_path(phase, epoch)
-        checkpoint_writer.save(
-            periodic_ckpt_path,
-            model=model,
-            normalizer=normalizer,
+    if p.checkpoint_every > 0 and epoch % p.checkpoint_every == 0:
+        periodic = manager.checkpoint_path(p.phase, epoch)
+        manager.save(
+            periodic,
+            model=cast(torch.nn.Module, p.model),
+            normalizer=p.normalizer,
             meta=_build_checkpoint_meta(
                 config=config,
-                dataset_key=dataset_key,
                 epoch=epoch,
                 loss=train_loss,
-                extra=extra_meta,
+                extra=p.extra_meta,
             ),
-            model_kind=phase,
+            model_kind=p.phase,
             ema_state_dict=_ema_state_dict(),
         )
-        if recent_ckpts is not None:
-            recent_ckpts.append(periodic_ckpt_path)
-            _prune_kept_checkpoints(recent_ckpts, keep_last_checkpoints)
-        _append_unique(ckpt_paths, periodic_ckpt_path)
+        if p.keep_last_checkpoints > 0 and len(recent_ckpts) >= p.keep_last_checkpoints:
+            _remove_missing_ok(recent_ckpts[0])
+        recent_ckpts.append(periodic)
+        _append_unique(ckpt_paths, periodic)
 
     if _should_save_latest(
         epoch=epoch,
-        total_epochs=total_epochs,
-        checkpoint_every=checkpoint_every,
-        latest_checkpoint_every=latest_checkpoint_every,
+        total_epochs=p.effective_epochs,
+        checkpoint_every=p.checkpoint_every,
+        latest_checkpoint_every=p.latest_checkpoint_every,
     ):
-        checkpoint_writer.save(
+        manager.save(
             latest_ckpt,
-            model=model,
-            normalizer=normalizer,
+            model=cast(torch.nn.Module, p.model),
+            normalizer=p.normalizer,
             meta=_build_checkpoint_meta(
                 config=config,
-                dataset_key=dataset_key,
                 epoch=epoch,
                 loss=metric_loss,
-                extra=extra_meta,
+                extra=p.extra_meta,
             ),
-            model_kind=phase,
+            model_kind=p.phase,
             ema_state_dict=_ema_state_dict(),
         )
         _append_unique(ckpt_paths, latest_ckpt)
@@ -758,19 +686,30 @@ def _manage_stage_checkpoints(
     if is_new_best:
         best_meta = _build_checkpoint_meta(
             config=config,
-            dataset_key=dataset_key,
             epoch=epoch,
             loss=metric_loss,
-            extra=extra_meta,
+            extra=p.extra_meta,
         )
-        best_meta.update({"is_best": True})
-        checkpoint_writer.save(
+        best_meta["is_best"] = True
+        manager.save(
             best_ckpt,
-            model=model,
-            normalizer=normalizer,
+            model=cast(torch.nn.Module, p.model),
+            normalizer=p.normalizer,
             meta=best_meta,
-            model_kind=phase,
+            model_kind=p.phase,
             ema_state_dict=_ema_state_dict(),
         )
-        if best_ckpt not in ckpt_paths:
-            ckpt_paths.append(best_ckpt)
+        _append_unique(ckpt_paths, best_ckpt)
+
+        output_path = getattr(p.config, "output_path", None)
+        if output_path:
+            phase_alias = Path(str(output_path)) / f"{p.phase}.pt"
+            manager.save(
+                phase_alias,
+                model=cast(torch.nn.Module, p.model),
+                normalizer=p.normalizer,
+                meta=best_meta,
+                model_kind=p.phase,
+                ema_state_dict=_ema_state_dict(),
+            )
+            _append_unique(ckpt_paths, phase_alias)

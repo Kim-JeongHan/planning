@@ -1,8 +1,7 @@
 """Model modules for diffusion training and guidance policy."""
 
 from .diffusion import DiffusionModel
-from .policy import ValueModel
-from .utils import (
+from .nn import (
     Conv1dBlock,
     Downsample1d,
     ResidualTemporalBlock,
@@ -11,6 +10,7 @@ from .utils import (
     TemporalValueNet,
     Upsample1d,
 )
+from .value import ValueModel
 
 __all__ = [
     "Conv1dBlock",

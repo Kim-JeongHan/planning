@@ -3,20 +3,26 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TypeVar, cast
 
 import numpy as np
-import yaml
+import yaml  # type: ignore[import-untyped]
 from tqdm import tqdm
 
 from planning.collision import ObstacleCollisionChecker
 from planning.map import Map
 from planning.sampling import RRT, RRTConfig
 
+_T = TypeVar("_T")
+
 
 def _sample_free_state(
-    rng: np.random.Generator, map_env: Map, checker: ObstacleCollisionChecker, bounds: list[tuple[float, float]]
+    rng: np.random.Generator,
+    map_env: Map,
+    checker: ObstacleCollisionChecker,
+    bounds: list[tuple[float, float]],
 ) -> np.ndarray:
     for _ in range(1_000):
         state = np.array(
@@ -114,7 +120,7 @@ def build_dataset(
     return len(trajectories)
 
 
-def _load_config(path: Path | None) -> dict[str, Any]:
+def _load_config(path: Path | None) -> dict[str, object]:
     if path is None:
         return {}
     if not path.exists():
@@ -126,11 +132,15 @@ def _load_config(path: Path | None) -> dict[str, Any]:
 
 
 def _select_config_value(
-    cli_value: Any, config: dict[str, Any], key: str, default: Any
-) -> Any:
+    cli_value: _T | None,
+    config: Mapping[str, object],
+    key: str,
+    default: _T,
+) -> _T:
     if cli_value is not None:
         return cli_value
-    return config.get(key, default)
+    value = config.get(key, default)
+    return cast(_T, value)
 
 
 def parse_args() -> argparse.Namespace:

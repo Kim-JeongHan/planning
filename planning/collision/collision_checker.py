@@ -173,10 +173,7 @@ class BoundedCollisionChecker(CollisionChecker):
         lower = self.bounds[:, 0]
         upper = self.bounds[:, 1]
         truncated = position[: self.bounds.shape[0]]
-        return bool(
-            np.all(truncated >= lower - self.eps)
-            and np.all(truncated <= upper + self.eps)
-        )
+        return bool(np.all(truncated >= lower - self.eps) and np.all(truncated <= upper + self.eps))
 
     def is_collision_free(self, state: np.ndarray) -> bool:
         """Check state bounds and delegate obstacle checks."""
