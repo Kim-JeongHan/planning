@@ -17,10 +17,10 @@ class RRTConfig(BaseModel):
 
     sampler: type[Sampler] = GoalBiasedSampler
     sampler_kwargs: dict[str, Any] = Field(default_factory=dict)
-    max_iterations: int = 5000
-    step_size: float = 0.5
-    goal_tolerance: float = 0.5
-    goal_bias: float = 0.05
+    max_iterations: int = Field(default=5000, ge=0)
+    step_size: float = Field(default=0.5, gt=0)
+    goal_tolerance: float = Field(default=0.5, ge=0)
+    goal_bias: float = Field(default=0.05, ge=0, le=1)
     seed: int | None = None
 
     @field_validator("sampler")
@@ -94,6 +94,12 @@ class RRT(RRTBase):
         # Check if start and goal are collision-free
         if not self._check_start_goal_collision():
             return None
+        root_goal = self._connect_goal(self.root)
+        if root_goal is not None:
+            self.goal_node = root_goal
+            if root_goal is not self.root:
+                self.nodes.append(root_goal)
+            return self._extract_path()
 
         # Main RRT loop
         for iteration in tqdm(range(self.max_iterations), desc="RRT Planning", unit="iter"):
@@ -105,16 +111,25 @@ class RRT(RRTBase):
             nearest_node = get_nearest_node(self.nodes, random_node)
 
             # Steer towards the random state
-            new_node = steer(nearest_node, random_node, self.step_size)
+            new_node = steer(
+                nearest_node,
+                random_node,
+                self.step_size,
+                attach_parent=False,
+            )
 
             # Check if the path is collision-free
             if self.collision_checker.is_path_collision_free(nearest_node.state, new_node.state):
                 # Add new node to the tree
+                new_node.change_parent(nearest_node, new_node.cost)
                 self.nodes.append(new_node)
 
                 # Check if goal is reached
-                if self._is_goal_reached(new_node):
-                    self.goal_node = new_node
+                goal_candidate = self._connect_goal(new_node)
+                if goal_candidate is not None:
+                    self.goal_node = goal_candidate
+                    if goal_candidate is not new_node:
+                        self.nodes.append(goal_candidate)
                     print(f"Goal reached in {iteration + 1} iterations!")
                     return self._extract_path()
 
@@ -198,9 +213,9 @@ class RRT(RRTBase):
 class RRTConnectConfig(BaseModel):
     """Configuration for RRT-Connect algorithm."""
 
-    max_iterations: int = 5000
-    step_size: float = 0.5
-    goal_tolerance: float = 0.5
+    max_iterations: int = Field(default=5000, ge=0)
+    step_size: float = Field(default=0.5, gt=0)
+    goal_tolerance: float = Field(default=0.5, ge=0)
     seed: int | None = None
 
 
@@ -266,10 +281,24 @@ class RRTConnect(RRTBase):
         self.start_nodes = [self.start_root]
         self.goal_nodes = [self.goal_root]
         self.failed_nodes = []  # Reset failed attempts
+        self.connection_point_start = None
+        self.connection_point_goal = None
+        self.swapped = False
 
         # Check if start and goal are collision-free
         if not self._check_start_goal_collision():
             return None
+        if np.linalg.norm(
+            self.start_state - self.goal_state
+        ) <= self.goal_tolerance and self.collision_checker.is_path_collision_free(
+            self.start_state, self.goal_state
+        ):
+            self.connection_point_start = self.start_root
+            connection_goal = Node(state=self.start_state)
+            connection_goal.parent = self.goal_root
+            connection_goal.cost = self.goal_root.cost + self.goal_root.distance_to(connection_goal)
+            self.connection_point_goal = connection_goal
+            return self._extract_path()
 
         # Main loop
         for iteration in tqdm(range(self.max_iterations), desc="RRT-Connect Planning", unit="iter"):
@@ -307,15 +336,20 @@ class RRTConnect(RRTBase):
             The new node if successful, None otherwise
         """
         nearest = get_nearest_node(tree, target)
-        new_node = steer(nearest, target, self.step_size)
+        new_node = steer(
+            nearest,
+            target,
+            self.step_size,
+            attach_parent=False,
+        )
 
         if self.collision_checker.is_path_collision_free(nearest.state, new_node.state):
+            new_node.change_parent(nearest, new_node.cost)
             tree.append(new_node)
             return new_node
 
         # Track failed extension attempt
-        failed_node = Node(state=new_node.state, parent=nearest)
-        self.failed_nodes.append(failed_node)
+        self.failed_nodes.append(self._make_failed_node(new_node.state, nearest))
         return None
 
     def _connect_tree(self, tree: list[Node], target: Node) -> Node | None:
@@ -335,26 +369,40 @@ class RRTConnect(RRTBase):
 
             if dist <= self.step_size:
                 if self.collision_checker.is_path_collision_free(nearest.state, target.state):
-                    target_node = Node(state=target.state, parent=nearest)
+                    target_node = Node(state=target.state)
+                    target_node.change_parent(
+                        nearest, nearest.cost + nearest.distance_to(target_node)
+                    )
                     tree.append(target_node)
                     return target_node
-                failed_node = Node(state=target.state, parent=nearest)
-                self.failed_nodes.append(failed_node)
+                self.failed_nodes.append(self._make_failed_node(target.state, nearest))
                 return None
 
-            new_node = steer(nearest, target, self.step_size)
+            new_node = steer(
+                nearest,
+                target,
+                self.step_size,
+                attach_parent=False,
+            )
 
             if not self.collision_checker.is_path_collision_free(nearest.state, new_node.state):
-                failed_node = Node(state=new_node.state, parent=nearest)
-                self.failed_nodes.append(failed_node)
+                self.failed_nodes.append(self._make_failed_node(new_node.state, nearest))
                 return None
 
+            new_node.change_parent(nearest, new_node.cost)
             tree.append(new_node)
             prev = nearest
             nearest = new_node
 
             if np.allclose(prev.state, nearest.state):
                 return None
+
+    def _make_failed_node(self, state: np.ndarray, parent: Node) -> Node:
+        """Create a visualization-only failed node without mutating parent.children."""
+        failed_node = Node(state=state)
+        failed_node.parent = parent
+        failed_node.cost = parent.cost + parent.distance_to(failed_node)
+        return failed_node
 
     def _extract_path(self) -> list[Node]:
         """Extract the complete path from start to goal."""
@@ -443,11 +491,11 @@ class RRTStarConfig(BaseModel):
 
     sampler: type[Sampler] = GoalBiasedSampler
     sampler_kwargs: dict[str, Any] = Field(default_factory=dict)
-    max_iterations: int = 5000
-    step_size: float = 0.5
-    goal_tolerance: float = 0.5
-    goal_bias: float = 0.05
-    radius_gain: float = 1.0
+    max_iterations: int = Field(default=5000, ge=0)
+    step_size: float = Field(default=0.5, gt=0)
+    goal_tolerance: float = Field(default=0.5, ge=0)
+    goal_bias: float = Field(default=0.05, ge=0, le=1)
+    radius_gain: float = Field(default=1.0, gt=0)
     return_first_solution: bool = True
     seed: int | None = None
 
@@ -524,6 +572,11 @@ class RRTStar(RRGBase):
 
         if not self._check_start_goal_collision():
             return None
+        root_goal = self._connect_goal(self.root)
+        if root_goal is not None:
+            self.goal_node = root_goal
+            self.path = self._extract_path()
+            return self.path
 
         goal_candidates: list[Node] = []
 
@@ -535,7 +588,12 @@ class RRTStar(RRGBase):
 
             # Find nearest node in the graph
             nearest_node = get_nearest_node(self.graph.nodes, random_node)
-            new_node = steer(nearest_node, random_node, self.step_size)
+            new_node = steer(
+                nearest_node,
+                random_node,
+                self.step_size,
+                attach_parent=False,
+            )
 
             # Check if the path is collision-free
             if self.collision_checker.is_path_collision_free(nearest_node.state, new_node.state):
@@ -553,14 +611,15 @@ class RRTStar(RRGBase):
 
                 self._rewire_neighbors(new_node, neighbor_nodes)
 
-                if self._is_goal_reached(new_node):
+                goal_candidate = self._connect_goal(new_node)
+                if goal_candidate is not None:
                     if self.return_first_solution:
-                        self.goal_node = new_node
+                        self.goal_node = goal_candidate
                         print(f"Goal reached in {iteration + 1} iterations!")
                         self.path = self._extract_path()
                         return self.path
                     else:
-                        goal_candidates.append(new_node)
+                        goal_candidates.append(goal_candidate)
                         if len(goal_candidates) == 1:
                             print(
                                 f"First goal reached in {iteration + 1} iterations, continuing optimization..."
@@ -575,6 +634,16 @@ class RRTStar(RRGBase):
             return self.path
 
         return None
+
+    def _connect_goal(self, node: Node) -> Node | None:
+        """Connect a near-goal node and register exact-goal edges in the graph."""
+        goal_node = super()._connect_goal(node)
+        if goal_node is None or goal_node is node:
+            return goal_node
+
+        self.graph.add_node(goal_node)
+        self.graph.add_edge(node, goal_node, node.distance_to(goal_node))
+        return goal_node
 
     def _rewire_neighbors(self, new_node: Node, neighbor_nodes: list[Node]) -> None:
         """Rewire neighbor nodes if a better path through new_node exists.
@@ -709,6 +778,12 @@ class InformedRRTStar(RRTStar):
 
         if not self._check_start_goal_collision():
             return None
+        root_goal = self._connect_goal(self.root)
+        if root_goal is not None:
+            self.goal_node = root_goal
+            self.goal_nodes.append(root_goal)
+            self.path = self._extract_path()
+            return self.path
 
         # Main RRT* loop
         for _ in tqdm(range(self.max_iterations), desc="Informed RRT* Planning", unit="iter"):
@@ -723,7 +798,12 @@ class InformedRRTStar(RRTStar):
 
             # Find nearest node in the graph
             nearest_node = get_nearest_node(self.graph.nodes, random_node)
-            new_node = steer(nearest_node, random_node, self.step_size)
+            new_node = steer(
+                nearest_node,
+                random_node,
+                self.step_size,
+                attach_parent=False,
+            )
 
             # Check if the path is collision-free
             if self.collision_checker.is_path_collision_free(nearest_node.state, new_node.state):
@@ -742,12 +822,17 @@ class InformedRRTStar(RRTStar):
                 # Rewire neighbors to use new_node if it provides a better path
                 self._rewire_neighbors(new_node, neighbor_nodes)
 
-                if self._is_goal_reached(new_node):
-                    if self.goal_node is None or new_node.cost < self.goal_node.cost:
-                        self.goal_node = new_node
-                    self.goal_nodes.append(new_node)
+                goal_candidate = self._connect_goal(new_node)
+                if goal_candidate is not None:
+                    if self.goal_node is None or goal_candidate.cost < self.goal_node.cost:
+                        self.goal_node = goal_candidate
+                    self.goal_nodes.append(goal_candidate)
 
-        self.path = self._extract_path() if self.goal_nodes else None
+        if self.goal_nodes:
+            self.goal_node = min(self.goal_nodes, key=lambda node: node.cost)
+            self.path = self._extract_path()
+        else:
+            self.path = None
         return self.path
 
     def get_stats(self) -> dict[str, float | int | bool | None]:

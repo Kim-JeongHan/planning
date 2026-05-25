@@ -119,8 +119,8 @@ class InformedSampler(Sampler):
         Returns:
             A sampled state vector within the ellipsoid
         """
-        if c_best is not None and c_best < float("inf"):
-            return self._sample_informed_ellipsoid(c_best)
+        if c_best is not None and np.isfinite(c_best):
+            return self._sample_informed_ellipsoid(max(float(c_best), float(self.c_min)))
         else:
             return np.random.uniform(self.bounds[:, 0], self.bounds[:, 1])  # type: ignore[no-any-return]
 
@@ -145,12 +145,14 @@ class InformedSampler(Sampler):
             A sampled state vector within the ellipsoid
         """
         while True:
-            scale_matrix = np.diag(
-                [c_best / 2.0] + [np.sqrt(c_best**2 - self.c_min**2) / 2.0] * (self.dim - 1)
-            )
+            minor_axis = np.sqrt(max(c_best**2 - self.c_min**2, 0.0))
+            scale_matrix = np.diag([c_best / 2.0] + [minor_axis / 2.0] * (self.dim - 1))
 
             ball_sample = np.random.normal(0, 1, self.dim)
-            ball_sample /= np.linalg.norm(ball_sample)
+            sample_norm = np.linalg.norm(ball_sample)
+            if sample_norm == 0:
+                continue
+            ball_sample /= sample_norm
             r = np.random.uniform(0, 1) ** (1 / self.dim)
             ball_sample *= r
             sample = self.x_center + self.R @ scale_matrix @ ball_sample
@@ -170,6 +172,9 @@ class InformedSampler(Sampler):
         Returns:
             Rotation matrix
         """
+        if self.c_min == 0:
+            return np.eye(dim)
+
         a1 = (goal - start) / self.c_min
         i1 = np.zeros((dim, dim))
         i1[:, 0] = a1

@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import Optional
 
 import numpy as np
@@ -201,7 +202,14 @@ def distance(node1: Node, node2: Node) -> float:
     return node1.distance_to(node2)
 
 
-def steer(from_node: Node, to_node: Node, max_distance: float) -> Node:
+def steer(
+    from_node: Node,
+    to_node: Node,
+    max_distance: float,
+    *,
+    state_projector: Callable[[np.ndarray], np.ndarray] | None = None,
+    attach_parent: bool = True,
+) -> Node:
     """Steer from one node towards another with a maximum distance.
 
     This creates a new node that is at most max_distance away from from_node
@@ -211,24 +219,29 @@ def steer(from_node: Node, to_node: Node, max_distance: float) -> Node:
         from_node: The starting node
         to_node: The target node
         max_distance: Maximum distance to steer
+        attach_parent: Whether to attach the returned node to from_node immediately
 
     Returns:
         A new node in the direction of to_node
     """
+    if max_distance <= 0:
+        raise ValueError("max_distance must be positive")
+
     direction = to_node.state - from_node.state
     dist = float(np.linalg.norm(direction))
 
     if dist <= max_distance:
         # Target is within max_distance, return target state
         new_state = to_node.state
-        new_cost = from_node.cost + dist
     else:
         # Steer towards target with max_distance
         direction = direction / dist  # Normalize
         new_state = from_node.state + direction * max_distance
-        new_cost = from_node.cost + max_distance
 
-    return Node(state=new_state, parent=from_node, cost=new_cost)
+    projected_state = new_state if state_projector is None else state_projector(new_state)
+    projected_cost = from_node.cost + float(np.linalg.norm(projected_state - from_node.state))
+    parent = from_node if attach_parent else None
+    return Node(state=projected_state, parent=parent, cost=projected_cost)
 
 
 def get_nearest_node(nodes: list[Node], target: Node) -> Node:

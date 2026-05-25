@@ -76,6 +76,19 @@ class RRTBase(ABC):
 
         return True
 
+    def _connect_goal(self, node: Node) -> Node | None:
+        """Return an exact-goal node when node can validly finish the path."""
+        if np.linalg.norm(node.state - self.goal_state) > self.goal_tolerance:
+            return None
+        if not self.collision_checker.is_path_collision_free(node.state, self.goal_state):
+            return None
+        if np.allclose(node.state, self.goal_state):
+            return node
+
+        goal_node = Node(state=self.goal_state)
+        goal_node.change_parent(node, node.cost + node.distance_to(goal_node))
+        return goal_node
+
     @abstractmethod
     def plan(self) -> list[Node] | None:
         """Run the planning algorithm.
