@@ -268,6 +268,7 @@ class RRTConnect(RRTBase):
 
         # Track failed extension attempts for visualization
         self.failed_nodes: list[Node] = []
+        self.failed_edges: list[tuple[np.ndarray, np.ndarray]] = []
 
     def plan(self) -> list[Node] | None:
         """Run the RRT-Connect algorithm.
@@ -281,6 +282,7 @@ class RRTConnect(RRTBase):
         self.start_nodes = [self.start_root]
         self.goal_nodes = [self.goal_root]
         self.failed_nodes = []  # Reset failed attempts
+        self.failed_edges = []
         self.connection_point_start = None
         self.connection_point_goal = None
         self.swapped = False
@@ -295,8 +297,11 @@ class RRTConnect(RRTBase):
         ):
             self.connection_point_start = self.start_root
             connection_goal = Node(state=self.start_state)
-            connection_goal.parent = self.goal_root
-            connection_goal.cost = self.goal_root.cost + self.goal_root.distance_to(connection_goal)
+            connection_goal.change_parent(
+                self.goal_root,
+                self.goal_root.cost + self.goal_root.distance_to(connection_goal),
+            )
+            self.goal_nodes.append(connection_goal)
             self.connection_point_goal = connection_goal
             return self._extract_path()
 
@@ -349,7 +354,7 @@ class RRTConnect(RRTBase):
             return new_node
 
         # Track failed extension attempt
-        self.failed_nodes.append(self._make_failed_node(new_node.state, nearest))
+        self._record_failed_extension(new_node.state, nearest)
         return None
 
     def _connect_tree(self, tree: list[Node], target: Node) -> Node | None:
@@ -375,7 +380,7 @@ class RRTConnect(RRTBase):
                     )
                     tree.append(target_node)
                     return target_node
-                self.failed_nodes.append(self._make_failed_node(target.state, nearest))
+                self._record_failed_extension(target.state, nearest)
                 return None
 
             new_node = steer(
@@ -386,7 +391,7 @@ class RRTConnect(RRTBase):
             )
 
             if not self.collision_checker.is_path_collision_free(nearest.state, new_node.state):
-                self.failed_nodes.append(self._make_failed_node(new_node.state, nearest))
+                self._record_failed_extension(new_node.state, nearest)
                 return None
 
             new_node.change_parent(nearest, new_node.cost)
@@ -397,12 +402,14 @@ class RRTConnect(RRTBase):
             if np.allclose(prev.state, nearest.state):
                 return None
 
-    def _make_failed_node(self, state: np.ndarray, parent: Node) -> Node:
-        """Create a visualization-only failed node without mutating parent.children."""
-        failed_node = Node(state=state)
-        failed_node.parent = parent
-        failed_node.cost = parent.cost + parent.distance_to(failed_node)
-        return failed_node
+    def _record_failed_extension(self, state: np.ndarray, parent: Node) -> None:
+        """Record a rejected extension without adding it to the tree."""
+        failed_node = Node(
+            state=state,
+            cost=parent.cost + parent.distance_to_state(state),
+        )
+        self.failed_nodes.append(failed_node)
+        self.failed_edges.append((parent.state.copy(), failed_node.state.copy()))
 
     def _extract_path(self) -> list[Node]:
         """Extract the complete path from start to goal."""
@@ -440,7 +447,7 @@ class RRTConnect(RRTBase):
         return {
             "num_nodes_start": len(self.start_nodes),
             "num_nodes_goal": len(self.goal_nodes),
-            "num_failed_attempts": len(self.failed_nodes),
+            "num_failed_attempts": len(self.failed_edges),
             "total_nodes": len(self.start_nodes) + len(self.goal_nodes) + len(self.failed_nodes),
             "trees_connected": self.connection_point_start is not None,
             "path_nodes": len(path),

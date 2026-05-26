@@ -349,6 +349,28 @@ def test_rrt_rejected_extension_does_not_attach_failed_child() -> None:
     assert rrt.root.children == []
 
 
+def test_rrt_connect_failed_extension_records_edge_without_tree_child() -> None:
+    """Rejected RRT-Connect extensions should not create fake tree children."""
+    rrt_connect = RRTConnect(
+        start_state=(0.0, 0.0),
+        goal_state=(1.0, 0.0),
+        bounds=[(-1.0, 2.0), (-1.0, 1.0)],
+        collision_checker=RejectAllPaths(),
+        config=RRTConnectConfig(max_iterations=1, seed=1),
+    )
+
+    assert rrt_connect.plan() is None
+    assert rrt_connect.start_root is not None
+    assert rrt_connect.goal_root is not None
+    assert rrt_connect.start_root.children == []
+    assert rrt_connect.goal_root.children == []
+    assert len(rrt_connect.failed_nodes) == 1
+    assert len(rrt_connect.failed_edges) == 1
+    assert rrt_connect.failed_nodes[0].parent is None
+    assert np.allclose(rrt_connect.failed_edges[0][0], np.array([0.0, 0.0]))
+    assert np.allclose(rrt_connect.failed_edges[0][1], rrt_connect.failed_nodes[0].state)
+
+
 def test_rrt_close_start_connects_exact_goal() -> None:
     """A close start should still return an exact-goal waypoint when reachable."""
     rrt = RRT(

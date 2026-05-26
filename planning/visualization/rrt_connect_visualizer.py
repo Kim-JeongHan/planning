@@ -48,13 +48,14 @@ class RRTConnectVisualizer(BaseVisualizer):
 
         # Collect all failed nodes (including disconnected tree nodes)
         failed_nodes = self._collect_failed_nodes(planner, success_nodes_set)
+        failed_edges = self._collect_failed_edges(planner, failed_nodes)
 
         # Visualize components
         self._visualize_success_path(
             connection_path, success_color, line_width, show_nodes, node_radius, prefix
         )
         self._visualize_failed_nodes(
-            failed_nodes, failure_color, line_width, show_nodes, node_radius, prefix
+            failed_nodes, failed_edges, failure_color, line_width, show_nodes, node_radius, prefix
         )
         self._visualize_connection_points(planner, prefix)
         self._print_stats(planner, connection_path, failed_nodes)
@@ -85,6 +86,14 @@ class RRTConnectVisualizer(BaseVisualizer):
                 failed_nodes.append(node)
 
         return failed_nodes
+
+    def _collect_failed_edges(self, planner: "RRTConnect", failed_nodes: list) -> list:
+        """Collect rejected extension edges and disconnected tree edges."""
+        failed_edges = list(planner.failed_edges)
+        for node in failed_nodes:
+            if node.parent is not None:
+                failed_edges.append((node.parent.state, node.state))
+        return failed_edges
 
     def _visualize_success_path(
         self,
@@ -128,6 +137,7 @@ class RRTConnectVisualizer(BaseVisualizer):
     def _visualize_failed_nodes(
         self,
         failed_nodes: list,
+        failed_edges: list,
         failure_color: tuple[int, int, int],
         line_width: float,
         show_nodes: bool,
@@ -138,18 +148,14 @@ class RRTConnectVisualizer(BaseVisualizer):
         if not failed_nodes:
             return
 
-        # Draw failed edges
-        failed_edges = []
-        for node in failed_nodes:
-            if node.parent is not None:
-                parent_pos = self._get_pos(node.parent.state)
-                child_pos = self._get_pos(node.state)
-                failed_edges.append([parent_pos, child_pos])
-
         if failed_edges:
+            edge_points = [
+                [self._get_pos(parent_state), self._get_pos(child_state)]
+                for parent_state, child_state in failed_edges
+            ]
             self.server.scene.add_line_segments(
                 f"{prefix}/failed_attempts",
-                points=np.array(failed_edges),
+                points=np.array(edge_points),
                 colors=failure_color,
                 line_width=line_width * 0.5,
             )
