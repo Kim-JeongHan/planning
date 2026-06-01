@@ -61,6 +61,11 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # Allow unused imports in __init__.py
 "tests/**/*.py" = ["S101", "ANN"]  # Allow assert and missing annotations in tests
+"tests/test_diffuser_sampling.py" = ["E402"]
+"tests/test_diffuser_utils.py" = ["E402"]
+"tests/test_diffusion_core_normalizer.py" = ["E402"]
+"tests/test_diffusion_dataset_source.py" = ["E402"]
+"tests/test_diffusion_trainer_smoke.py" = ["E402"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["planning"]

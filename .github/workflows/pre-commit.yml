@@ -42,4 +42,4 @@ jobs:
 
       - name: Check for type errors
         run: |
-          uv run mypy planning/
+          uv run pre-commit run mypy --all-files

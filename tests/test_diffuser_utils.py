@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("torch")
+
 from planning.diffusion.core import PlannerStateNormalizer
 from planning.diffusion.training.checkpoint import CheckpointManager
 from planning.diffusion.utils import DiffusionArtifactLoader

@@ -5,7 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import torch  # type: ignore
+import pytest
+
+pytest.importorskip("torch")
+import torch
 
 from planning.diffusion.config import TrajectoryConfig
 from planning.diffusion.training.dataset import TrajectoryDataSetSource

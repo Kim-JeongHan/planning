@@ -16,10 +16,10 @@ from pydantic import BaseModel, ValidationError, field_validator
 
 from planning.collision import BoundedCollisionChecker, ObstacleCollisionChecker
 from planning.constraint import select_collision_free_trajectory
-from planning.diffusion import CheckpointManager, check_compatibility
 from planning.diffusion.config import DiffusionInferenceConfig
 from planning.diffusion.sampling import GuidedPolicy, ValueGuide
-from planning.diffusion.utils import DiffusionArtifactLoader
+from planning.diffusion.training.checkpoint import CheckpointManager
+from planning.diffusion.utils import DiffusionArtifactLoader, check_compatibility
 from planning.map import Map
 from planning.visualization import save_docs_image, setup_camera_top_view
 

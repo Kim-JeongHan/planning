@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import numpy as np
-import torch  # type: ignore
+import pytest
+
+pytest.importorskip("torch")
+import torch
 
 from planning.diffusion.core import PlannerStateNormalizer
 
