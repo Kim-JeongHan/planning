@@ -233,17 +233,27 @@ metric of a 3D mountain terrain.
 
 **Paper**: [Zhang, Y., Zhou, Q., & Yang, X.-S. "An RRT* algorithm based on Riemannian metric model for optimal path planning"](https://arxiv.org/html/2507.01697v1)
 
-| RRT-Connect | RRG |
-| --- | --- |
-| <img src="docs/images/rrt_star_r_rrt_connect_example.png" alt="RRT*-R RRT-Connect terrain metric example" width="100%"/> | <img src="docs/images/rrt_star_r_rrg_example.png" alt="RRT*-R RRG terrain metric example" width="100%"/> |
-| RRT* | PRM* |
-| <img src="docs/images/rrt_star_r_rrt_star_example.png" alt="RRT*-R RRT* terrain metric example" width="100%"/> | <img src="docs/images/rrt_star_r_prm_star_example.png" alt="RRT*-R PRM* terrain metric example" width="100%"/> |
+<table>
+  <tr>
+    <td><strong>RRT-Connect</strong><br/><img src="docs/images/rrt_star_r_rrt_connect_example.png" alt="RRT*-R RRT-Connect terrain metric example" width="100%"/></td>
+    <td><strong>RRG</strong><br/><img src="docs/images/rrt_star_r_rrg_example.png" alt="RRT*-R RRG terrain metric example" width="100%"/></td>
+  </tr>
+  <tr>
+    <td><strong>RRT*</strong><br/><img src="docs/images/rrt_star_r_rrt_star_example.png" alt="RRT*-R RRT* terrain metric example" width="100%"/></td>
+    <td><strong>PRM*</strong><br/><img src="docs/images/rrt_star_r_prm_star_example.png" alt="RRT*-R PRM* terrain metric example" width="100%"/></td>
+  </tr>
+</table>
 
 **Features:**
-- **Shared planning-space abstraction**: `PlanningSpace` owns distance, steering, edge states, and edge cost
-- **Riemannian terrain cost**: `TerrainRiemannianSpace` uses the terrain surface metric for Line-R edge costs
-- **Consistent rendering**: path and graph edges use `graph.edge_states(...)`, so rendered path segments match planner edge samples
-- **No separate RRT*-R class**: metric behavior is configured through each planner config's `space=...`
+- **Projection-plane planning**: plans in a 2D chart while measuring edge length with the Riemannian metric induced by the 3D terrain surface
+- **Environment-aware edge cost**: steep height changes increase local curve length, so the planner prefers smoother terrain routes over short Euclidean shortcuts
+- **RRT*-R cost model**: replaces Euclidean edge length with numerical Line-R cost while keeping the RRT* expansion, neighbor, and rewiring structure
+- **Geodesic approximation goal**: searches for low-cost paths under the induced metric, matching the paper's framing of approximating shortest surface/geodesic distance
+
+**Implementation additions:**
+- **Reusable planning space**: `TerrainRiemannianSpace` plugs into `PlanningSpace`, so graph distance, steering, edge samples, and edge cost use one metric source
+- **Planner comparison beyond the paper**: the same terrain metric can be run with RRT-Connect, RRG, RRT*, and PRM* for side-by-side behavior comparison
+- **Matched visualization**: graph edges and final paths are rendered from `graph.edge_states(...)`, so displayed waypoints and local edge samples stay consistent
 
 **Run:**
 ```bash
