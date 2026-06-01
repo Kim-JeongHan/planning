@@ -201,7 +201,13 @@ def main(
         print("Open http://localhost:8080 in your browser.\n")
 
         # Setup camera view
-        setup_camera_isometric_view(server, distance=18.0, look_at=(0.0, 0.0, 1.4))
+        setup_camera_isometric_view(
+            server,
+            distance=17.0,
+            look_at=(0.0, 0.0, 1.2),
+            elevation_deg=34.0,
+            azimuth_deg=-35.0,
+        )
 
     # Create terrain
     terrain = MountainTerrain()

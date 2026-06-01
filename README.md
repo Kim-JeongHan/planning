@@ -233,6 +233,8 @@ planner in a 2D chart while edge costs follow the induced surface metric of a
 
 **Paper**: [Zhang, Y., Zhou, Q., & Yang, X.-S. "An RRT* algorithm based on Riemannian metric model for optimal path planning"](https://arxiv.org/html/2507.01697v1)
 
+<img src="docs/images/rrt_star_terrain_example.png" alt="RRT*-R Terrain Metric Example" width="100%" height="100%"/>
+
 **Features:**
 - **Planning-space abstraction**: `PlanningSpace` owns distance, steering, edge states, and edge cost
 - **Riemannian terrain cost**: `TerrainRiemannianSpace` uses the terrain surface metric for Line-R edge costs

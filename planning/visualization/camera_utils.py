@@ -64,6 +64,8 @@ def setup_camera_isometric_view(
     server: viser.ViserServer,
     distance: float = 25.0,
     look_at: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    elevation_deg: float = 45.0,
+    azimuth_deg: float = 45.0,
 ) -> None:
     """Setup camera for isometric view (45° angle, 45° rotation).
 
@@ -71,12 +73,13 @@ def setup_camera_isometric_view(
         server: Viser server instance
         distance: Distance from the center point
         look_at: Point to look at (x, y, z)
+        elevation_deg: Vertical camera angle in degrees
+        azimuth_deg: Horizontal camera rotation in degrees
     """
     import numpy as np
 
-    # Isometric view: 45° elevation, 45° azimuth
-    elevation = np.deg2rad(45)
-    azimuth = np.deg2rad(45)
+    elevation = np.deg2rad(elevation_deg)
+    azimuth = np.deg2rad(azimuth_deg)
 
     x = distance * np.cos(elevation) * np.cos(azimuth)
     y = distance * np.cos(elevation) * np.sin(azimuth)
