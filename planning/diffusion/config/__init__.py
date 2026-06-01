@@ -72,6 +72,7 @@ class DiffusionTrainingConfig(DiffusionBaseConfig):
     state_dim: int
     epochs: int
     batch_size: int
+    horizon: int | None = 16
     device: str = "cpu"
     n_hidden: int = 256
     learning_rate: float = 1e-3
