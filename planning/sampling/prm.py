@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from tqdm import tqdm
 
 from ..collision import CollisionChecker
-from ..graph import Node, get_nodes_within_radius
+from ..graph import Node
 from .base import RRGBase
 from .sampler import GoalBiasedSampler, Sampler, UniformSampler
 
@@ -108,18 +108,22 @@ class PRM(RRGBase):
                         continue
 
                     sort_neighbor_nodes = sorted(
-                        neighbor_nodes, key=lambda x: x.distance_to(random_node)
+                        neighbor_nodes, key=lambda node: self.graph.distance(node, random_node)
                     )
 
                     for neighbor_node in sort_neighbor_nodes:
                         if self.graph.check_edge(neighbor_node, random_node):
                             continue
 
-                        if self.collision_checker.is_path_collision_free(
-                            neighbor_node.state, random_node.state
+                        if self.graph.is_edge_collision_free(
+                            neighbor_node,
+                            random_node,
+                            self.collision_checker,
                         ):
                             self.graph.add_edge(
-                                neighbor_node, random_node, neighbor_node.distance_to(random_node)
+                                neighbor_node,
+                                random_node,
+                                self.graph.edge_cost(neighbor_node, random_node),
                             )
             # Check connectivity from root to goal; only stop when a path exists
             candidate_path = self.astar.search(self.root, self.goal_node)
@@ -134,9 +138,9 @@ class PRM(RRGBase):
 
         return self.path
 
-    def get_near_node(self, target: Node) -> list[Node]:
-        """Get the near nodes of the target node."""
-        return get_nodes_within_radius(self.graph.nodes, target, self.radius)
+    def _connection_radius(self) -> float:
+        """Return PRM's fixed connection radius."""
+        return self.radius
 
     def get_stats(self) -> dict[str, float | int | bool | None]:
         """Get statistics about the planning process.
@@ -208,21 +212,6 @@ class PRMStar(PRM):
 
         self.radius_gain = config.radius_gain
 
-    def get_near_node(self, target: Node) -> list[Node]:
-        """Get the near nodes of the target node.
-
-        Uses dynamic radius calculation: r(n) = radius_gain * (log(n)/n)^(1/d)
-        where n is the number of nodes and d is the dimension. This ensures
-        asymptotic optimality as the number of samples increases.
-
-        Args:
-            target: Target node to find neighbors for
-
-        Returns:
-            List of nodes within the dynamic radius of the target node
-        """
-
-        radius = self.radius_gain * np.power(
-            np.log(len(self.graph.nodes)) / len(self.graph.nodes), 1 / self.dim
-        )
-        return get_nodes_within_radius(self.graph.nodes, target, radius)
+    def _connection_radius(self) -> float:
+        """Return PRM*'s asymptotically optimal dynamic connection radius."""
+        return RRGBase._connection_radius(self)

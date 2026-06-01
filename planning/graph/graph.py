@@ -1,7 +1,13 @@
 """Graph class for managing planning environment."""
 
+from __future__ import annotations
+
+from itertools import pairwise
+
 import numpy as np
 
+from ..collision import CollisionChecker
+from ..space import EuclideanSpace, PlanningSpace
 from .node import Node
 
 
@@ -77,8 +83,9 @@ class Edge:
 class Graph:
     """Graph class for managing planning environment."""
 
-    def __init__(self) -> None:
+    def __init__(self, space: PlanningSpace | None = None) -> None:
         """Initialize the graph."""
+        self.space = EuclideanSpace() if space is None else space
         self.nodes: list[Node] = []
         self.edges: list[Edge] = []
 
@@ -127,24 +134,59 @@ class Graph:
         """Get the number of edges in the graph."""
         return len(self.edges)
 
+    def distance(self, node1: Node, node2: Node) -> float:
+        """Return the planning-space distance between nodes."""
+        return self.space.distance(node1.state, node2.state)
+
+    def nearest(self, target: Node) -> Node:
+        """Find the nearest graph node according to the graph planning space."""
+        if not self.nodes:
+            raise ValueError("Node list is empty")
+        return min(self.nodes, key=lambda node: self.distance(node, target))
+
+    def near(self, target: Node, radius: float) -> list[Node]:
+        """Return graph nodes within radius according to the graph planning space."""
+        return [node for node in self.nodes if self.distance(node, target) <= radius]
+
     def steer(self, from_node: Node, to_node: Node, max_distance: float) -> tuple[Node, float]:
-        """Steer from one node towards another with a maximum distance."""
-        direction = to_node.state - from_node.state
-        dist = float(np.linalg.norm(direction))
-
-        if dist <= max_distance:
-            # Target is within max_distance, return target state
-            new_state = to_node.state
-            new_cost = dist
-        else:
-            # Steer towards target with max_distance
-            direction = direction / dist  # Normalize
-            new_state = from_node.state + direction * max_distance
-            new_cost = max_distance
-
+        """Steer from one node toward another using the graph planning space."""
+        new_state = self.space.steer(from_node.state, to_node.state, max_distance)
+        if new_state.shape != from_node.state.shape:
+            raise ValueError("planning space steer must return a state with the node dimension")
         new_node = Node(state=new_state)
-
+        new_cost = self.edge_cost(from_node, new_node)
         return new_node, new_cost
+
+    def edge_cost(self, node1: Node, node2: Node) -> float:
+        """Return the planning-space edge cost between nodes."""
+        return self.space.edge_cost(node1.state, node2.state)
+
+    def edge_states(self, node1: Node, node2: Node) -> np.ndarray:
+        """Return planning-space edge states between nodes."""
+        return self.space.edge_states(node1.state, node2.state)
+
+    def is_edge_collision_free(
+        self,
+        node1: Node,
+        node2: Node,
+        collision_checker: CollisionChecker,
+    ) -> bool:
+        """Check every segment in the planning-space edge for collision."""
+        states = self.edge_states(node1, node2)
+        if states.ndim != 2 or states.shape[1] != node1.dim:
+            raise ValueError("planning space edge states must have shape (N, node_dim)")
+        if len(states) == 0:
+            raise ValueError("planning space edge states must not be empty")
+        if not np.allclose(states[0], node1.state):
+            raise ValueError("planning space edge states must start at node1")
+        if not np.allclose(states[-1], node2.state):
+            raise ValueError("planning space edge states must end at node2")
+        if len(states) == 1:
+            return collision_checker.is_collision_free(states[0])
+        return all(
+            collision_checker.is_path_collision_free(from_state, to_state)
+            for from_state, to_state in pairwise(states)
+        )
 
     def check_edge(self, node1: Node, node2: Node) -> bool:
         """Check if an edge exists between two nodes."""

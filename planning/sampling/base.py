@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 
 from ..collision import CollisionChecker, EmptyCollisionChecker, ObstacleCollisionChecker
-from ..graph import Graph, Node, get_nodes_within_radius
+from ..graph import Graph, Node
 from ..search import AStar
 
 
@@ -59,6 +59,7 @@ class RRTBase(ABC):
 
         self.root: Node | None = None
         self.goal_node: Node | None = None
+        self.graph = Graph()
 
     def _check_start_goal_collision(self) -> bool:
         """Check if start and goal states are collision-free.
@@ -78,15 +79,15 @@ class RRTBase(ABC):
 
     def _connect_goal(self, node: Node) -> Node | None:
         """Return an exact-goal node when node can validly finish the path."""
-        if np.linalg.norm(node.state - self.goal_state) > self.goal_tolerance:
+        goal_node = Node(state=self.goal_state)
+        if self.graph.distance(node, goal_node) > self.goal_tolerance:
             return None
-        if not self.collision_checker.is_path_collision_free(node.state, self.goal_state):
+        if not self.graph.is_edge_collision_free(node, goal_node, self.collision_checker):
             return None
         if np.allclose(node.state, self.goal_state):
             return node
 
-        goal_node = Node(state=self.goal_state)
-        goal_node.change_parent(node, node.cost + node.distance_to(goal_node))
+        goal_node.change_parent(node, node.cost + self.graph.edge_cost(node, goal_node))
         return goal_node
 
     @abstractmethod
@@ -165,8 +166,6 @@ class RRGBase(RRTBase):
             seed=seed,
         )
 
-        # Graph
-        self.graph = Graph()
         self.path: list[Node] | None = None
 
         # A*
@@ -182,9 +181,12 @@ class RRGBase(RRTBase):
         if num_nodes <= 1:
             return []
 
-        radius = self.radius_gain * np.power(np.log(num_nodes) / num_nodes, 1 / self.dim)
+        return self.graph.near(target, self._connection_radius())
 
-        return get_nodes_within_radius(self.graph.nodes, target, radius)
+    def _connection_radius(self) -> float:
+        """Return the connection radius used by near-node queries."""
+        num_nodes = len(self.graph.nodes)
+        return float(self.radius_gain * np.power(np.log(num_nodes) / num_nodes, 1 / self.dim))
 
     def get_path_length(self) -> float:
         """Get the total length of the current path."""
@@ -193,5 +195,7 @@ class RRGBase(RRTBase):
 
         if len(self.path) < 2:
             return 0.0
-        distances = [self.path[i].distance_to(self.path[i + 1]) for i in range(len(self.path) - 1)]
+        distances = [
+            self.graph.distance(self.path[i], self.path[i + 1]) for i in range(len(self.path) - 1)
+        ]
         return float(np.sum(distances)) if distances else float("inf")

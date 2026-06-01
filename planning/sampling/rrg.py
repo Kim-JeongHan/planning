@@ -5,7 +5,7 @@ from pydantic import BaseModel, field_validator
 from tqdm import tqdm
 
 from ..collision import CollisionChecker
-from ..graph import Node, get_nearest_node
+from ..graph import Node
 from .base import RRGBase
 from .sampler import GoalBiasedSampler, Sampler
 
@@ -99,21 +99,23 @@ class RRG(RRGBase):
             random_node = Node(state=random_state)
 
             # Find nearest node in the graph
-            nearest_node = get_nearest_node(self.graph.nodes, random_node)
+            nearest_node = self.graph.nearest(random_node)
             new_node, new_cost = self.graph.steer(nearest_node, random_node, self.step_size)
 
             # Check if the path is collision-free
-            if self.collision_checker.is_path_collision_free(nearest_node.state, new_node.state):
+            if self.graph.is_edge_collision_free(nearest_node, new_node, self.collision_checker):
                 self.graph.add_node(new_node)
                 self.graph.add_edge(nearest_node, new_node, new_cost)
 
                 neighbor_nodes = self.get_near_node(new_node)
 
                 for neighbor_node in neighbor_nodes:
-                    if self.collision_checker.is_path_collision_free(
-                        neighbor_node.state, new_node.state
+                    if self.graph.is_edge_collision_free(
+                        neighbor_node,
+                        new_node,
+                        self.collision_checker,
                     ):
-                        cost = neighbor_node.distance_to(new_node)
+                        cost = self.graph.edge_cost(neighbor_node, new_node)
                         self.graph.add_edge(neighbor_node, new_node, cost)
 
                 # Check if goal is reached (outside neighbor loop)
@@ -134,7 +136,7 @@ class RRG(RRGBase):
         Returns:
             True if within goal tolerance
         """
-        return bool(np.linalg.norm(node.state - self.goal_state) <= self.goal_tolerance)
+        return self.graph.distance(node, Node(state=self.goal_state)) <= self.goal_tolerance
 
     def get_stats(self) -> dict[str, float | int | bool | None]:
         """Get statistics about the planning process.
