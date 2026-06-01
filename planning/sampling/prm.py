@@ -1,17 +1,20 @@
 """PRM (Probabilistic Roadmap Method) implementation."""
 
 import numpy as np
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from tqdm import tqdm
 
 from ..collision import CollisionChecker
 from ..graph import Node
+from ..space import PlanningSpace
 from .base import RRGBase
 from .sampler import GoalBiasedSampler, Sampler, UniformSampler
 
 
 class PRMConfig(BaseModel):
     """PRM configuration."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     sampler: type[Sampler] = UniformSampler
     sample_number: int = 1000
@@ -20,6 +23,7 @@ class PRMConfig(BaseModel):
     goal_tolerance: float = 0.1
     goal_bias: float = 0.05
     radius: float = 1.0
+    space: PlanningSpace | None = None
     seed: int = 42
 
 
@@ -56,6 +60,8 @@ class PRM(RRGBase):
             goal_tolerance=config.goal_tolerance,
             seed=config.seed,
         )
+        if config.space is not None:
+            self.graph.space = config.space
 
         # Sampler
         if config.sampler is GoalBiasedSampler:

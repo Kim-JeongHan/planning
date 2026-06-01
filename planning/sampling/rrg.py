@@ -1,17 +1,20 @@
 """RRG (Rapidly-exploring Random Graph) algorithm implementation."""
 
 import numpy as np
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 from tqdm import tqdm
 
 from ..collision import CollisionChecker
 from ..graph import Node
+from ..space import PlanningSpace
 from .base import RRGBase
 from .sampler import GoalBiasedSampler, Sampler
 
 
 class RRGConfig(BaseModel):
     """Configuration for RRG algorithm."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     sampler: type[Sampler] = GoalBiasedSampler
     max_iterations: int = 1000
@@ -20,6 +23,7 @@ class RRGConfig(BaseModel):
     step_size: float = 0.5
     goal_tolerance: float = 0.5
     goal_bias: float = 0.05
+    space: PlanningSpace | None = None
     seed: int | None = None
 
     @field_validator("sampler")
@@ -66,6 +70,8 @@ class RRG(RRGBase):
             radius_gain=config.radius_gain,
             seed=config.seed,
         )
+        if config.space is not None:
+            self.graph.space = config.space
 
         # Sampler
         if config.sampler is GoalBiasedSampler:

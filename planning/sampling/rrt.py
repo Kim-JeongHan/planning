@@ -200,9 +200,12 @@ class RRT(RRTBase):
 class RRTConnectConfig(BaseModel):
     """Configuration for RRT-Connect algorithm."""
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     max_iterations: int = Field(default=5000, ge=0)
     step_size: float = Field(default=0.5, gt=0)
     goal_tolerance: float = Field(default=0.5, ge=0)
+    space: PlanningSpace | None = None
     seed: int | None = None
 
 
@@ -245,8 +248,10 @@ class RRTConnect(RRTBase):
         self.sampler = UniformSampler(bounds=bounds, seed=config.seed)
 
         # Trees
-        self.start_graph = Graph()
-        self.goal_graph = Graph()
+        self.space = EuclideanSpace() if config.space is None else config.space
+        self.graph.space = self.space
+        self.start_graph = Graph(self.space)
+        self.goal_graph = Graph(self.space)
         self.start_nodes: list[Node] = []
         self.goal_nodes: list[Node] = []
         self.start_root: Node | None = None

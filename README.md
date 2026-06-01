@@ -17,7 +17,7 @@ A Python 3D path planning library with visualization using Viser. Implements pat
 - 🗺️ **Multi-Query Planning**: PRM and PRM* build reusable roadmaps for efficient path queries
 - 🎬 **Diffusion-based Planning**: Guided reverse-diffusion sampler with value-based trajectory guidance
 - 🔄 **Trajectory One-shot Inference**: Generate full collision-aware trajectories from start/goal constraints in one call
-- 🧭 **Metric-aware RRT***: `RRTStarConfig(space=...)` supports Euclidean and terrain Riemannian planning spaces
+- 🧭 **Metric-aware Sampling**: RRT-Connect, RRG, RRT*, and PRM* can share Euclidean or terrain Riemannian planning spaces
 
 ## Requirements
 
@@ -227,26 +227,36 @@ uv run python examples/informed_rrt_star_example.py
 
 ### 8. RRT*-R (Riemannian Metric RRT*)
 
-RRT* with a configurable planning-space metric. The terrain example keeps the
-planner in a 2D chart while edge costs follow the induced surface metric of a
-3D mountain terrain.
+Sampling planners with a configurable planning-space metric. The terrain example
+keeps the planner in a 2D chart while edge costs follow the induced surface
+metric of a 3D mountain terrain.
 
 **Paper**: [Zhang, Y., Zhou, Q., & Yang, X.-S. "An RRT* algorithm based on Riemannian metric model for optimal path planning"](https://arxiv.org/html/2507.01697v1)
 
-<img src="docs/images/rrt_star_r_example.png" alt="RRT*-R Terrain Metric Example" width="100%" height="100%"/>
+| RRT-Connect | RRG |
+| --- | --- |
+| <img src="docs/images/rrt_star_r_rrt_connect_example.png" alt="RRT*-R RRT-Connect terrain metric example" width="100%"/> | <img src="docs/images/rrt_star_r_rrg_example.png" alt="RRT*-R RRG terrain metric example" width="100%"/> |
+| RRT* | PRM* |
+| <img src="docs/images/rrt_star_r_rrt_star_example.png" alt="RRT*-R RRT* terrain metric example" width="100%"/> | <img src="docs/images/rrt_star_r_prm_star_example.png" alt="RRT*-R PRM* terrain metric example" width="100%"/> |
 
 **Features:**
-- **Planning-space abstraction**: `PlanningSpace` owns distance, steering, edge states, and edge cost
+- **Shared planning-space abstraction**: `PlanningSpace` owns distance, steering, edge states, and edge cost
 - **Riemannian terrain cost**: `TerrainRiemannianSpace` uses the terrain surface metric for Line-R edge costs
 - **Consistent rendering**: path and graph edges use `graph.edge_states(...)`, so rendered path segments match planner edge samples
-- **No separate planner class**: RRT*-R is configured as `RRTStarConfig(space=TerrainRiemannianSpace(...))`
+- **No separate RRT*-R class**: metric behavior is configured through each planner config's `space=...`
 
 **Run:**
 ```bash
 uv run python examples/rrt_star_r_example.py
 
+# Choose a planner
+uv run python examples/rrt_star_r_example.py --planner rrt-connect
+uv run python examples/rrt_star_r_example.py --planner rrg
+uv run python examples/rrt_star_r_example.py --planner rrt-star
+uv run python examples/rrt_star_r_example.py --planner prm-star --samples 500
+
 # Headless smoke run
-uv run python examples/rrt_star_r_example.py --no-show --iterations 120
+uv run python examples/rrt_star_r_example.py --planner rrt-star --no-show --iterations 120
 ```
 
 **Minimal usage:**

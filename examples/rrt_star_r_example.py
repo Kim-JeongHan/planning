@@ -1,4 +1,4 @@
-"""RRT* terrain-metric planning example."""
+"""Terrain-metric sampling planner example."""
 
 from __future__ import annotations
 
@@ -15,16 +15,43 @@ from planning.map import (
     TerrainRiemannianSpace,
     create_random_start_goal,
 )
-from planning.sampling import RRTStar, RRTStarConfig
+from planning.sampling import (
+    RRG,
+    PRMStar,
+    PRMStarConfig,
+    RRGConfig,
+    RRTConnect,
+    RRTConnectConfig,
+    RRTStar,
+    RRTStarConfig,
+)
 from planning.visualization import save_docs_image, setup_camera_isometric_view
+
+PlannerName = str
+
+PLANNER_CHOICES = ("rrt-connect", "rrg", "rrt-star", "prm-star")
+PLANNER_LABELS = {
+    "rrt-connect": "RRT-Connect",
+    "rrg": "RRG",
+    "rrt-star": "RRT*",
+    "prm-star": "PRM*",
+}
+PLANNER_IMAGE_NAMES = {
+    "rrt-connect": "rrt_star_r_rrt_connect_example.png",
+    "rrg": "rrt_star_r_rrg_example.png",
+    "rrt-star": "rrt_star_r_rrt_star_example.png",
+    "prm-star": "rrt_star_r_prm_star_example.png",
+}
 
 
 def plan_terrain_path(
     terrain: MountainTerrain,
     start: np.ndarray | tuple[float, float] | None = None,
     goal: np.ndarray | tuple[float, float] | None = None,
+    planner_name: PlannerName = "rrt-star",
     seed: int = 42,
-    max_iterations: int = 500,
+    max_iterations: int = 600,
+    sample_count: int = 500,
 ) -> TerrainPlan:
     """Plan a 2D path whose edge costs follow the terrain surface metric."""
     bounds = terrain.bounds
@@ -40,44 +67,125 @@ def plan_terrain_path(
         if goal is None:
             goal = rng.uniform(lower, upper)
 
-    start_state = np.asarray(start, dtype=float)
-    goal_state = np.asarray(goal, dtype=float)
+    start_state = np.array(start, dtype=float)
+    goal_state = np.array(goal, dtype=float)
     space = TerrainRiemannianSpace(terrain)
-    planner = RRTStar(
+    planner = create_planner(
+        planner_name=planner_name,
         start_state=start_state,
         goal_state=goal_state,
         bounds=bounds,
-        config=RRTStarConfig(
-            space=space,
-            max_iterations=max_iterations,
-            step_size=0.55,
-            goal_tolerance=0.35,
-            goal_bias=0.08,
-            radius_gain=8.0,
-            return_first_solution=False,
-            seed=seed,
-        ),
+        space=space,
+        seed=seed,
+        max_iterations=max_iterations,
+        sample_count=sample_count,
     )
     path_nodes = planner.plan()
     if path_nodes is None:
-        raise RuntimeError(f"RRTStar failed: nodes={len(planner.graph.nodes)}")
+        raise RuntimeError(
+            f"{PLANNER_LABELS[planner_name]} failed: nodes={len(planner.get_all_nodes())}"
+        )
 
     path_edge_states = [
         planner.graph.edge_states(from_node, to_node) for from_node, to_node in pairwise(path_nodes)
     ]
-    graph_edge_states = [
-        planner.graph.edge_states(edge.node1, edge.node2) for edge in planner.graph.edges
-    ]
+    graph_edge_states = collect_graph_edge_states(planner)
+    sampled_nodes = np.array([node.state for node in planner.get_all_nodes()], dtype=float)
 
     return TerrainPlan(
         start=start_state,
         goal=goal_state,
         path=np.array([node.state for node in path_nodes], dtype=float),
         path_edge_states=path_edge_states,
-        sampled_nodes=np.array([node.state for node in planner.graph.nodes], dtype=float),
+        sampled_nodes=sampled_nodes,
         graph_edge_states=graph_edge_states,
         path_length=planner.get_path_length(),
     )
+
+
+def create_planner(
+    planner_name: PlannerName,
+    start_state: np.ndarray,
+    goal_state: np.ndarray,
+    bounds: list[tuple[float, float]],
+    space: TerrainRiemannianSpace,
+    seed: int,
+    max_iterations: int,
+    sample_count: int,
+) -> RRTConnect | RRG | RRTStar | PRMStar:
+    """Create a terrain-metric planner by public planner name."""
+    if planner_name == "rrt-connect":
+        return RRTConnect(
+            start_state=start_state,
+            goal_state=goal_state,
+            bounds=bounds,
+            config=RRTConnectConfig(
+                space=space,
+                max_iterations=max_iterations,
+                step_size=0.55,
+                goal_tolerance=0.35,
+                seed=seed,
+            ),
+        )
+    if planner_name == "rrg":
+        return RRG(
+            start_state=start_state,
+            goal_state=goal_state,
+            bounds=bounds,
+            config=RRGConfig(
+                space=space,
+                max_iterations=max_iterations,
+                step_size=0.55,
+                goal_tolerance=0.35,
+                goal_bias=0.08,
+                radius_gain=8.0,
+                seed=seed,
+            ),
+        )
+    if planner_name == "rrt-star":
+        return RRTStar(
+            start_state=start_state,
+            goal_state=goal_state,
+            bounds=bounds,
+            config=RRTStarConfig(
+                space=space,
+                max_iterations=max_iterations,
+                step_size=0.55,
+                goal_tolerance=0.35,
+                goal_bias=0.08,
+                radius_gain=8.0,
+                return_first_solution=False,
+                seed=seed,
+            ),
+        )
+    if planner_name == "prm-star":
+        return PRMStar(
+            start_state=start_state,
+            goal_state=goal_state,
+            bounds=bounds,
+            config=PRMStarConfig(
+                space=space,
+                sample_number=sample_count,
+                max_retries=1,
+                step_size=0.55,
+                goal_tolerance=0.35,
+                goal_bias=0.08,
+                radius_gain=8.0,
+                seed=seed,
+            ),
+        )
+    raise ValueError(f"Unsupported planner: {planner_name}")
+
+
+def collect_graph_edge_states(planner: RRTConnect | RRG | RRTStar | PRMStar) -> list[np.ndarray]:
+    """Return local edge states for graph/tree visualization."""
+    if planner.graph.edges:
+        return [planner.graph.edge_states(edge.node1, edge.node2) for edge in planner.graph.edges]
+    return [
+        planner.graph.edge_states(node.parent, node)
+        for node in planner.get_all_nodes()
+        if node.parent is not None
+    ]
 
 
 def edge_paths_to_surface_segments(
@@ -185,13 +293,16 @@ def visualize_plan(
 
 
 def main(
+    planner_name: PlannerName = "rrt-star",
     seed: int = 42,
-    max_iterations: int = 500,
+    max_iterations: int = 600,
+    sample_count: int = 500,
     save_image: bool = False,
     show: bool = True,
 ) -> None:
-    """RRT*-R with terrain metric and 3D visualization."""
+    """Run a metric-aware sampling planner with terrain metric visualization."""
     print("=== RRT*-R Terrain-Metric Planning Example ===\n")
+    planner_label = PLANNER_LABELS[planner_name]
 
     server = None
     if show:
@@ -219,11 +330,13 @@ def main(
     start_state = np.array([-5.5, -5.5])
     goal_state = np.array([5.5, 5.5])
 
-    print("Planning with RRT*-R terrain metric...")
+    print(f"Planning with {planner_label} terrain metric...")
     print(f"  Start: {start_state}")
     print(f"  Goal: {goal_state}")
     print(f"  Bounds: {terrain.bounds}")
+    print(f"  Planner: {planner_label}")
     print(f"  Max iterations: {max_iterations}")
+    print(f"  PRM* samples: {sample_count}")
     print("  Step size: 0.55")
     print("  Goal tolerance: 0.35")
     print("  Radius gain: 8.0\n")
@@ -233,8 +346,10 @@ def main(
             terrain,
             start=start_state,
             goal=goal_state,
+            planner_name=planner_name,
             seed=seed,
             max_iterations=max_iterations,
+            sample_count=sample_count,
         )
     except RuntimeError as exc:
         print("\n No path found!")
@@ -257,7 +372,7 @@ def main(
         print("   Red sphere: Goal")
         print("   Yellow lines: Final terrain-metric path")
         print("   Yellow points: Final path waypoints")
-        print("   Blue lines: RRT*-R graph edges")
+        print(f"   Blue lines: {planner_label} graph edges")
         print("   Blue points: Sampled graph nodes")
 
     # Statistics
@@ -287,8 +402,9 @@ def main(
             """Save documentation image after client connects."""
             print("\n Saving image...")
             time.sleep(2)  # Wait for rendering
-            save_docs_image(client, "rrt_star_r_example.png")
-            print(" Image saved to docs/images/rrt_star_r_example.png")
+            image_name = PLANNER_IMAGE_NAMES[planner_name]
+            save_docs_image(client, image_name)
+            print(f" Image saved to docs/images/{image_name}")
 
     # Keep server running
     print("\nPress Ctrl+C to exit.")
@@ -301,15 +417,24 @@ def main(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="RRT* terrain-metric planning example")
+    parser = argparse.ArgumentParser(description="Metric-aware terrain planning example")
+    parser.add_argument(
+        "--planner",
+        choices=PLANNER_CHOICES,
+        default="rrt-star",
+        help="Planner to run with the terrain metric",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument("--iterations", type=int, default=500, help="Planner iteration budget")
+    parser.add_argument("--iterations", type=int, default=600, help="Planner iteration budget")
+    parser.add_argument("--samples", type=int, default=500, help="PRM* sample budget")
     parser.add_argument("--save-image", action="store_true", help="Save documentation image")
     parser.add_argument("--no-show", action="store_true", help="Plan without starting Viser")
     args = parser.parse_args()
     main(
+        planner_name=args.planner,
         seed=args.seed,
         max_iterations=args.iterations,
+        sample_count=args.samples,
         save_image=args.save_image,
         show=not args.no_show,
     )
