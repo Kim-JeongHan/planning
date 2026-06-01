@@ -287,8 +287,8 @@ def main(
             """Save documentation image after client connects."""
             print("\n Saving image...")
             time.sleep(2)  # Wait for rendering
-            save_docs_image(client, "rrt_star_terrain_example.png")
-            print(" Image saved to docs/images/rrt_star_terrain_example.png")
+            save_docs_image(client, "rrt_star_r_example.png")
+            print(" Image saved to docs/images/rrt_star_r_example.png")
 
     # Keep server running
     print("\nPress Ctrl+C to exit.")
