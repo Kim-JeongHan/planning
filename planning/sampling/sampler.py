@@ -145,7 +145,7 @@ class InformedSampler(Sampler):
             A sampled state vector within the ellipsoid
         """
         while True:
-            minor_axis = np.sqrt(max(c_best**2 - self.c_min**2, 0.0))
+            minor_axis = np.sqrt(max(float(c_best**2 - self.c_min**2), 0.0))
             scale_matrix = np.diag([c_best / 2.0] + [minor_axis / 2.0] * (self.dim - 1))
 
             ball_sample = np.random.normal(0, 1, self.dim)

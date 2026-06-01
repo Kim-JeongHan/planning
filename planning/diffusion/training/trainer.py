@@ -130,7 +130,7 @@ class DiffusionTrainingPipeline:
         summary_writer = SummaryWriter(log_dir=str(writer_dir))
 
         try:
-            trajectories, normalizer = self._load_and_prepare_dataset()
+            trajectories, normalizer, horizon = self._load_and_prepare_dataset()
             config = self.cfg
             train_loader, val_loader = self._build_data_loaders(trajectories, normalizer, config)
             checkpoint_manager = self._build_checkpoint_manager(config)
@@ -149,6 +149,7 @@ class DiffusionTrainingPipeline:
                     checkpoint_manager=checkpoint_manager,
                     summary_writer=summary_writer,
                     training_device=device,
+                    horizon=horizon,
                 )
 
             if cfg.train_value:
@@ -160,6 +161,7 @@ class DiffusionTrainingPipeline:
                     checkpoint_manager=checkpoint_manager,
                     summary_writer=summary_writer,
                     training_device=device,
+                    horizon=horizon,
                 )
         finally:
             if summary_writer is not None:
@@ -173,7 +175,7 @@ class DiffusionTrainingPipeline:
 
     def _load_and_prepare_dataset(
         self,
-    ) -> tuple[torch.Tensor, PlannerStateNormalizer]:
+    ) -> tuple[torch.Tensor, PlannerStateNormalizer, int]:
         """Load raw sequences, validate configured horizon, and fit normalizer."""
         cfg = self.cfg
 
@@ -192,7 +194,7 @@ class DiffusionTrainingPipeline:
             cfg.state_dim,
         )
         normalizer = PlannerStateNormalizer.fit(trajectories)
-        return trajectories, normalizer
+        return trajectories, normalizer, horizon
 
     def _build_data_loaders(
         self,
@@ -290,6 +292,7 @@ class DiffusionTrainingPipeline:
         checkpoint_manager: CheckpointManager,
         summary_writer: object | None,
         training_device: torch.device,
+        horizon: int,
     ) -> list[Path]:
         effective_epochs = config.epochs
         if config.diffusion_max_epochs is not None:
@@ -299,7 +302,7 @@ class DiffusionTrainingPipeline:
 
         model = DiffusionModel(
             state_dim=config.state_dim,
-            horizon=config.horizon,
+            horizon=horizon,
             n_diffusion_steps=config.n_diffusion_steps,
             dim=config.n_hidden,
         ).to(training_device)
@@ -347,6 +350,7 @@ class DiffusionTrainingPipeline:
         checkpoint_manager: CheckpointManager,
         summary_writer: object | None,
         training_device: torch.device,
+        horizon: int,
     ) -> list[Path]:
         effective_epochs = config.epochs
         if config.value_max_epochs is not None:
@@ -358,7 +362,7 @@ class DiffusionTrainingPipeline:
 
         model = ValueModel(
             state_dim=config.state_dim,
-            horizon=config.horizon,
+            horizon=horizon,
             dim=config.n_hidden,
         ).to(training_device)
         optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)

@@ -14,7 +14,7 @@ class DiffusionBaseConfig(BaseModel):
 
     n_diffusion_steps: int = 100
     discount: float = 1.0
-    horizon: int = 16
+    horizon: int | None = 16
     seed: int = 42
 
 

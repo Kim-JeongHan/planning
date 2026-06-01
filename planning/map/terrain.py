@@ -179,7 +179,8 @@ class MountainTerrain:
     def _create_grid(self) -> tuple[np.ndarray, np.ndarray]:
         xs = np.linspace(-self.world_size / 2.0, self.world_size / 2.0, self.grid_size)
         ys = np.linspace(-self.world_size / 2.0, self.world_size / 2.0, self.grid_size)
-        return np.meshgrid(xs, ys)
+        xx, yy = np.meshgrid(xs, ys)
+        return xx, yy
 
     def _create_height_map(self) -> np.ndarray:
         zz = np.zeros_like(self.xx)
