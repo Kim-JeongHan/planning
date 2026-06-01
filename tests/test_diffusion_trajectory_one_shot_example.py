@@ -5,7 +5,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from examples import diffusion_trajectory_one_shot_example as helper
 from planning.collision import CollisionChecker
 from planning.constraint import select_collision_free_trajectory
 from planning.diffusion.inference import extract_trajectory_observations
@@ -66,7 +65,10 @@ def test_extract_trajectory_observations_from_mapping_like() -> None:
 
 def test_load_run_config_reads_yaml(tmp_path: Path) -> None:
     """Load config from YAML and validate with DiffusionOneShotConfig."""
+    pytest.importorskip("torch")
     pytest.importorskip("yaml")
+    from examples import diffusion_trajectory_one_shot_example as helper
+
     config_path = tmp_path / "one_shot.yaml"
     config_path.write_text(
         "diffusion:\n"

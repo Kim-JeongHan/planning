@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
-import torch  # type: ignore
+import pytest
 
+pytest.importorskip("torch")
+import torch
+
+from planning.diffusion.config import TrajectoryConfig
 from planning.diffusion.training.dataset import TrajectoryDataSetSource
 
 
@@ -17,7 +20,13 @@ def test_load_npz_returns_torch_tensors(tmp_path: Path) -> None:
     np.savez(dataset_path, observations=observations)
 
     source = TrajectoryDataSetSource(
-        SimpleNamespace(dataset=dataset_path, horizon=5, state_dim=3, device="cpu")
+        TrajectoryConfig(
+            dataset=str(dataset_path),
+            horizon=5,
+            state_dim=3,
+            device="cpu",
+            seed=42,
+        )
     )
     trajectories = source.load()
 

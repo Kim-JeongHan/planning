@@ -106,7 +106,7 @@ def build_dataset(
         if path is None:
             continue
 
-        path_states = np.asarray([node.state for node in path], dtype=np.float32)
+        path_states = np.array([node.state for node in path], dtype=np.float32)
         if len(path_states) < 2:
             continue
 

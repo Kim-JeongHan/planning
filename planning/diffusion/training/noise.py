@@ -47,7 +47,7 @@ class DiffusionSchedule:
     @property
     def betas(self) -> np.ndarray:
         if self.mode == "cosine" and self._precomputed_betas:
-            return np.asarray(self._precomputed_betas, dtype=float)
+            return np.array(self._precomputed_betas, dtype=float)
         return np.linspace(self.beta_start, self.beta_end, self.n_diffusion_steps, dtype=float)
 
     @property
@@ -132,7 +132,7 @@ class DiffusionSchedule:
     def q_sample(
         self, x_start: np.ndarray, t: np.ndarray, noise: np.ndarray | None = None
     ) -> np.ndarray:
-        t_idx = np.asarray(t, dtype=int).reshape(-1)
+        t_idx = np.array(t, dtype=int).reshape(-1)
         if noise is None:
             noise = np.random.normal(size=x_start.shape)
         if noise.shape != x_start.shape:

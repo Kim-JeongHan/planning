@@ -375,7 +375,7 @@ class DiffusionSamplingEngine:
             # --- Inpainting: restore constrained timesteps ---
             trajectory = self._apply_inpainting(trajectory, inpaint)
 
-        return np.asarray(trajectory.detach().cpu().numpy(), dtype=float)
+        return trajectory.detach().cpu().numpy().astype(float, copy=False)
 
 
 # ---------------------------------------------------------------------------

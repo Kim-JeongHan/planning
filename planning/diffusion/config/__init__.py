@@ -14,7 +14,7 @@ class DiffusionBaseConfig(BaseModel):
 
     n_diffusion_steps: int = 100
     discount: float = 1.0
-    horizon: int = 16
+    horizon: int | None = 16
     seed: int = 42
 
 
@@ -72,6 +72,7 @@ class DiffusionTrainingConfig(DiffusionBaseConfig):
     state_dim: int
     epochs: int
     batch_size: int
+    horizon: int | None = 16
     device: str = "cpu"
     n_hidden: int = 256
     learning_rate: float = 1e-3

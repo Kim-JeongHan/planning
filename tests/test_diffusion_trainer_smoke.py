@@ -9,6 +9,8 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
+pytest.importorskip("torch")
+
 from planning.diffusion.config import DiffusionTrainingConfig
 from planning.diffusion.core import PlannerStateNormalizer
 

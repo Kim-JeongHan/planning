@@ -51,28 +51,6 @@ class Node:
         """
         return float(self.state[index])
 
-    def distance_to(self, other: "Node") -> float:
-        """Calculate Euclidean distance to another node.
-
-        Args:
-            other: The other node
-
-        Returns:
-            The Euclidean distance
-        """
-        return float(np.linalg.norm(self.state - other.state))
-
-    def distance_to_state(self, state: tuple[float, ...] | np.ndarray | list[float]) -> float:
-        """Calculate Euclidean distance to a state.
-
-        Args:
-            state: The target state
-
-        Returns:
-            The Euclidean distance
-        """
-        return float(np.linalg.norm(self.state - np.array(state)))
-
     def get_path_to_root(self) -> list["Node"]:
         """Get the path from this node to the root node.
 
@@ -186,78 +164,3 @@ class Node:
     def __lt__(self, other: "Node") -> bool:
         """Define less-than for heap operations (based on unique id)."""
         return id(self) < id(other)
-
-
-def distance(node1: Node, node2: Node) -> float:
-    """Calculate distance between two nodes.
-
-    Args:
-        node1: First node
-        node2: Second node
-
-    Returns:
-        Euclidean distance
-    """
-    return node1.distance_to(node2)
-
-
-def steer(from_node: Node, to_node: Node, max_distance: float) -> Node:
-    """Steer from one node towards another with a maximum distance.
-
-    This creates a new node that is at most max_distance away from from_node
-    in the direction of to_node.
-
-    Args:
-        from_node: The starting node
-        to_node: The target node
-        max_distance: Maximum distance to steer
-
-    Returns:
-        A new node in the direction of to_node
-    """
-    direction = to_node.state - from_node.state
-    dist = float(np.linalg.norm(direction))
-
-    if dist <= max_distance:
-        # Target is within max_distance, return target state
-        new_state = to_node.state
-        new_cost = from_node.cost + dist
-    else:
-        # Steer towards target with max_distance
-        direction = direction / dist  # Normalize
-        new_state = from_node.state + direction * max_distance
-        new_cost = from_node.cost + max_distance
-
-    return Node(state=new_state, parent=from_node, cost=new_cost)
-
-
-def get_nearest_node(nodes: list[Node], target: Node) -> Node:
-    """Find the nearest node to a target node from a list of nodes.
-
-    Args:
-        nodes: List of nodes to search
-        target: Target node
-
-    Returns:
-        The nearest node
-    """
-    if not nodes:
-        raise ValueError("Node list is empty")
-
-    distances = [node.distance_to(target) for node in nodes]
-    nearest_idx = np.argmin(distances)
-    return nodes[nearest_idx]
-
-
-def get_nodes_within_radius(nodes: list[Node], center: Node, radius: float) -> list[Node]:
-    """Get all nodes within a certain radius of a center node.
-
-    Args:
-        nodes: List of nodes to search
-        center: Center node
-        radius: Search radius
-
-    Returns:
-        List of nodes within the radius
-    """
-    return [node for node in nodes if node.distance_to(center) <= radius]

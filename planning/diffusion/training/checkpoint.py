@@ -229,6 +229,14 @@ class CheckpointLoader:
                 by_name = self._resolve_named_checkpoint(root, requested, candidates)
                 if by_name is not None:
                     return by_name
+                if requested.isdecimal():
+                    by_epoch = self._resolve_checkpoint_by_epoch(
+                        root,
+                        int(requested),
+                        candidates,
+                    )
+                    if by_epoch is not None:
+                        return by_epoch
                 direct = root / requested
                 if direct.exists():
                     return direct

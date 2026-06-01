@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from planning.graph.node import Node, distance, get_nearest_node, steer
+from planning.graph import Graph, Node
 
 
 def test_node_creation_2d():
@@ -41,7 +41,7 @@ def test_distance_calculation():
     node1 = Node(state=(0, 0))
     node2 = Node(state=(3, 4))
 
-    dist = distance(node1, node2)
+    dist = Graph().distance(node1, node2)
 
     assert dist == 5.0  # 3-4-5 triangle
 
@@ -64,7 +64,7 @@ def test_steer_within_distance():
     from_node = Node(state=(0, 0))
     to_node = Node(state=(1, 0))
 
-    new_node = steer(from_node, to_node, max_distance=2.0)
+    new_node, _ = Graph().steer(from_node, to_node, max_distance=2.0)
 
     assert np.allclose(new_node.state, [1, 0])
 
@@ -74,10 +74,11 @@ def test_steer_exceeds_distance():
     from_node = Node(state=(0, 0))
     to_node = Node(state=(10, 0))
 
-    new_node = steer(from_node, to_node, max_distance=2.0)
+    new_node, edge_cost = Graph().steer(from_node, to_node, max_distance=2.0)
 
     assert np.allclose(new_node.state, [2, 0])
-    assert new_node.parent == from_node
+    assert edge_cost == 2.0
+    assert new_node.parent is None
 
 
 def test_get_nearest_node():
@@ -89,7 +90,9 @@ def test_get_nearest_node():
     ]
     target = Node(state=(0.9, 0.1))
 
-    nearest = get_nearest_node(nodes, target)
+    graph = Graph()
+    graph.nodes = nodes
+    nearest = graph.nearest(target)
 
     assert np.allclose(nearest.state, [1, 0])
 

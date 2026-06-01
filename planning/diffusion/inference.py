@@ -26,14 +26,14 @@ def extract_trajectory_observations(result: object) -> np.ndarray:
         A NumPy array of shape [batch, horizon, state_dim].
     """
     if hasattr(result, "observations"):
-        return np.asarray(result.observations, dtype=float)
+        return np.array(result.observations, dtype=float)
     if isinstance(result, tuple):
         for item in result:
             observations = extract_trajectory_observations(item)
             if observations.ndim == 3:
                 return observations
         raise ValueError("Policy result tuple did not contain trajectory observations.")
-    return np.asarray(result, dtype=float)
+    return np.array(result, dtype=float)
 
 
 def sample_trajectory_batch(

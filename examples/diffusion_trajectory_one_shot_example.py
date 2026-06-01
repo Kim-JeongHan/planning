@@ -16,10 +16,10 @@ from pydantic import BaseModel, ValidationError, field_validator
 
 from planning.collision import BoundedCollisionChecker, ObstacleCollisionChecker
 from planning.constraint import select_collision_free_trajectory
-from planning.diffusion import CheckpointManager, check_compatibility
 from planning.diffusion.config import DiffusionInferenceConfig
 from planning.diffusion.sampling import GuidedPolicy, ValueGuide
-from planning.diffusion.utils import DiffusionArtifactLoader
+from planning.diffusion.training.checkpoint import CheckpointManager
+from planning.diffusion.utils import DiffusionArtifactLoader, check_compatibility
 from planning.map import Map
 from planning.visualization import save_docs_image, setup_camera_top_view
 
@@ -54,12 +54,12 @@ class EnvironmentConfig(BaseModel):
     @property
     def start_state_array(self) -> np.ndarray:
         """Return start state as a float numpy vector."""
-        return np.asarray(self.start_state, dtype=float)
+        return np.array(self.start_state, dtype=float)
 
     @property
     def goal_state_array(self) -> np.ndarray:
         """Return goal state as a float numpy vector."""
-        return np.asarray(self.goal_state, dtype=float)
+        return np.array(self.goal_state, dtype=float)
 
 
 class RolloutConfig(BaseModel):
@@ -211,7 +211,7 @@ def main(
     print(f"Sampling took {sampling_time:.2f} seconds.")
     print(f"Sampled {len(result.observations)} trajectories, checking constraints...")
 
-    trajectory_candidates = np.asarray(result.observations, dtype=float)
+    trajectory_candidates = np.array(result.observations, dtype=float)
     selected_trajectory = select_collision_free_trajectory(
         trajectories=trajectory_candidates,
         collision_checker=collision_checker,

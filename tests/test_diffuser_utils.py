@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("torch")
+
 from planning.diffusion.core import PlannerStateNormalizer
 from planning.diffusion.training.checkpoint import CheckpointManager
 from planning.diffusion.utils import DiffusionArtifactLoader
@@ -64,7 +66,11 @@ def test_diffusion_artifact_loader_loads_epoch_checkpoint(tmp_path: Path) -> Non
     torch.save(payload, ckpt_path)
 
     manager = CheckpointManager.for_loading(str(root))
-    artifact = DiffusionArtifactLoader(manager).load("1")
+    artifact = DiffusionArtifactLoader(
+        manager,
+        seed=42,
+        device=torch.device("cpu"),
+    ).load("1")
 
     assert artifact.dataset.name == "unit-dataset"
     assert artifact.dataset.horizon == 4

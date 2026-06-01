@@ -63,6 +63,6 @@ def select_collision_free_trajectory(
         if not _within_tolerance(points[-1], goal_state, endpoint_tolerance):
             continue
         if _is_collision_free_path(points, collision_checker, segment_resolution):
-            return np.asarray(points, dtype=float)
+            return np.array(points, dtype=float)
 
     return None

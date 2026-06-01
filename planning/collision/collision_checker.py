@@ -149,7 +149,7 @@ class BoundedCollisionChecker(CollisionChecker):
             bounds: Sequence of (min, max) tuples per dimension.
             eps: Tolerance used for inclusive bounds check.
         """
-        bounds_array = np.asarray(bounds, dtype=float)
+        bounds_array = np.array(bounds, dtype=float)
         if bounds_array.ndim != 2 or bounds_array.shape[1] != 2:
             raise ValueError("bounds must be shape (N, 2)")
         if np.any(bounds_array[:, 0] > bounds_array[:, 1]):
@@ -161,7 +161,7 @@ class BoundedCollisionChecker(CollisionChecker):
 
     def _within_bounds(self, state: np.ndarray) -> bool:
         """Return True when position is inside bounds."""
-        position = np.asarray(state, dtype=float)
+        position = np.array(state, dtype=float)
         if position.ndim != 1:
             raise ValueError("state must be a 1-D array")
         if position.size < self.bounds.shape[0]:
