@@ -17,6 +17,7 @@ A Python 3D path planning library with visualization using Viser. Implements pat
 - 🗺️ **Multi-Query Planning**: PRM and PRM* build reusable roadmaps for efficient path queries
 - 🎬 **Diffusion-based Planning**: Guided reverse-diffusion sampler with value-based trajectory guidance
 - 🔄 **Trajectory One-shot Inference**: Generate full collision-aware trajectories from start/goal constraints in one call
+- 🧭 **Metric-aware RRT***: `RRTStarConfig(space=...)` supports Euclidean and terrain Riemannian planning spaces
 
 ## Requirements
 
@@ -224,9 +225,58 @@ uv run python examples/informed_rrt_star_example.py
 
 ---
 
-### 8. Diffuser (Guided Diffusion Planning)
+### 8. RRT*-R (Riemannian Metric RRT*)
 
-Trajectory planning by reverse diffusion with value-guided sampling.  
+RRT* with a configurable planning-space metric. The terrain example keeps the
+planner in a 2D chart while edge costs follow the induced surface metric of a
+3D mountain terrain.
+
+**Paper**: [Zhang, Y., Zhou, Q., & Yang, X.-S. "An RRT* algorithm based on Riemannian metric model for optimal path planning"](https://arxiv.org/html/2507.01697v1)
+
+**Features:**
+- **Planning-space abstraction**: `PlanningSpace` owns distance, steering, edge states, and edge cost
+- **Riemannian terrain cost**: `TerrainRiemannianSpace` uses the terrain surface metric for Line-R edge costs
+- **Consistent rendering**: path and graph edges use `graph.edge_states(...)`, so rendered path segments match planner edge samples
+- **No separate planner class**: RRT*-R is configured as `RRTStarConfig(space=TerrainRiemannianSpace(...))`
+
+**Run:**
+```bash
+uv run python examples/rrt_star_terrain_example.py
+
+# Headless smoke run
+uv run python examples/rrt_star_terrain_example.py --no-show --iterations 120
+```
+
+**Minimal usage:**
+```python
+from planning.map import MountainTerrain, TerrainRiemannianSpace
+from planning.sampling import RRTStar, RRTStarConfig
+
+terrain = MountainTerrain()
+space = TerrainRiemannianSpace(terrain)
+
+planner = RRTStar(
+    start_state=(-5.5, -5.5),
+    goal_state=(5.5, 5.5),
+    bounds=terrain.bounds,
+    config=RRTStarConfig(
+        space=space,
+        max_iterations=500,
+        step_size=0.55,
+        goal_tolerance=0.35,
+        radius_gain=8.0,
+        return_first_solution=False,
+        seed=42,
+    ),
+)
+path = planner.plan()
+```
+
+---
+
+### 9. Diffuser (Guided Diffusion Planning)
+
+Trajectory planning by reverse diffusion with value-guided sampling.
 A diffusion model learns a trajectory prior from data, and a value model steers each
 denoising step toward high-quality motions during reverse sampling (Algorithm 1).
 
