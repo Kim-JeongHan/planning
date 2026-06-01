@@ -269,31 +269,6 @@ uv run python examples/rrt_star_r_example.py --planner prm-star --samples 500
 uv run python examples/rrt_star_r_example.py --planner rrt-star --no-show --iterations 120
 ```
 
-**Minimal usage:**
-```python
-from planning.map import MountainTerrain, TerrainRiemannianSpace
-from planning.sampling import RRTStar, RRTStarConfig
-
-terrain = MountainTerrain()
-space = TerrainRiemannianSpace(terrain)
-
-planner = RRTStar(
-    start_state=(-5.5, -5.5),
-    goal_state=(5.5, 5.5),
-    bounds=terrain.bounds,
-    config=RRTStarConfig(
-        space=space,
-        max_iterations=500,
-        step_size=0.55,
-        goal_tolerance=0.35,
-        radius_gain=8.0,
-        return_first_solution=False,
-        seed=42,
-    ),
-)
-path = planner.plan()
-```
-
 ---
 
 ### 9. Diffuser (Guided Diffusion Planning)

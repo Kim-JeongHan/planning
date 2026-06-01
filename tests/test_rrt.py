@@ -53,7 +53,7 @@ class SequenceSampler(Sampler):
         **kwargs: object,
     ) -> None:
         super().__init__(bounds)
-        self.samples = [np.asarray(sample, dtype=float) for sample in samples]
+        self.samples = [np.array(sample, dtype=float) for sample in samples]
         self.index = 0
 
     def sample(self) -> np.ndarray:

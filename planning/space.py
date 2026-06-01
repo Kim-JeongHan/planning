@@ -55,11 +55,11 @@ class EuclideanSpace(PlanningSpace):
 
     def distance(self, start: np.ndarray, goal: np.ndarray) -> float:
         """Return Euclidean distance between states."""
-        return float(np.linalg.norm(np.asarray(goal, dtype=float) - np.asarray(start, dtype=float)))
+        return float(np.linalg.norm(goal - start))
 
     def edge_states(self, start: np.ndarray, goal: np.ndarray) -> np.ndarray:
         """Return the straight edge endpoints."""
-        return np.vstack([np.asarray(start, dtype=float), np.asarray(goal, dtype=float)])
+        return np.vstack([start, goal])
 
     def edge_cost(self, start: np.ndarray, goal: np.ndarray) -> float:
         """Return the Euclidean edge cost."""
