@@ -197,20 +197,23 @@ uv run python examples/prm_star_example.py
 
 ### 7. Informed RRT* - Comparison with RRT*
 
-Comparison of standard RRT* and its informed variant that uses heuristic sampling for faster convergence.
+Comparison of standard RRT* and its informed variant using the same seed, start/goal, obstacle map, max iterations, step size, and radius gain.
 
 | **RRT* (RRT-Star)** | **Informed RRT*** |
 |---------------------|-------------------|
-| <img src="docs/images/rrt_star_opt_example.png" alt="RRT* Example" width="100%"/> | <img src="docs/images/informed_rrt_star_example.png" alt="Informed RRT* Example" width="100%"/> |
+| <img src="docs/images/rrt_star_opt_example.png" alt="RRT* Example" width="360"/> | <img src="docs/images/informed_rrt_star_example.png" alt="Informed RRT* Example" width="360"/> |
+| Standard RRT* sampling with rewiring.<br/>First goal at iteration : 213<br/>Optimized iterations : 3000<br/>Path length : 11.01<br/>Planning time : 32 seconds<br/>Waypoints : 40<br/>Graph nodes : 2920<br/>Graph edges : 2919<br/>Goal candidates : 154 | Uses RRT* until a first solution exists, then samples inside the informed ellipsoid.<br/>Optimized iterations : 3000<br/>Path length : 11.01<br/>Planning time : 29 seconds<br/>Waypoints : 40<br/>Graph nodes : 2912<br/>Graph edges : 2911<br/>Goal candidates : 18 |
+
+In this run, Informed RRT* does not find a shorter final path than RRT*. Both planners converge to the same path length and waypoint count, while Informed RRT* finishes slightly faster because its post-solution sampling focuses on states that can still improve the current best path.
 
 #### What is Informed RRT*?
 
-An improved version of RRT* that uses informed sampling within an ellipsoidal subset of the state space, leading to faster convergence to optimal solutions.
+An improved version of RRT* that uses informed sampling within an ellipsoidal subset of the state space after a first solution is found. It can improve convergence speed in optimization-focused runs, but it does not guarantee a better path in every finite run.
 
 **Paper**: [Gammell, J. D., et al. (2014). "Informed RRT*: Optimal sampling-based path planning focused via direct sampling of an admissible ellipsoidal heuristic"](https://arxiv.org/pdf/1404.2334)
 
 **Features:**
-- **Faster convergence**: Focuses sampling on regions that can improve the solution
+- **Focused convergence**: Focuses sampling on regions that can improve the solution after a first path exists
 - **Ellipsoidal sampling**: After finding initial solution, samples only within prolate hyperspheroid defined by start, goal, and current best cost
 - **Asymptotic optimality**: Maintains optimality guarantee of RRT*
 - **Informed search**: Uses geometric heuristic to reject samples that cannot improve the path
@@ -228,7 +231,7 @@ An improved version of RRT* that uses informed sampling within an ellipsoidal su
 | Aspect | RRT* | Informed RRT* |
 |--------|------|---------------|
 | **Sampling Strategy** | Uniform sampling over entire space throughout planning | Uniform initially, then focused ellipsoidal sampling after first solution |
-| **Convergence Speed** | Slower - explores entire space | Faster - focuses on promising regions |
+| **Convergence Speed** | Explores the full space throughout planning | Can be faster after the first solution because sampling is focused |
 | **Optimality** | Asymptotically optimal | Asymptotically optimal (same guarantee) |
 | **When to Use** | Unknown environments, first solution priority | Known start/goal, optimization priority |
 
