@@ -72,9 +72,10 @@ def main(seed: int = 42, save_image: bool = False) -> None:
             sampler=GoalBiasedSampler,
             seed=seed,
             step_size=0.5,
-            max_iterations=5000,
-            radius_gain=1.0,
+            max_iterations=2000,
+            radius_gain=5.0,
             goal_bias=0.05,
+            return_first_solution=False,
         ),
     )
 

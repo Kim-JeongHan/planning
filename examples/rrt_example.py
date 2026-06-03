@@ -1,6 +1,7 @@
 """RRT algorithm example with mixed obstacle types."""
 
 import argparse
+import time
 
 import numpy as np
 import viser
@@ -79,11 +80,14 @@ def main(seed: int = 42, save_image: bool = False) -> None:
     print(f"  Goal tolerance: {rrt.goal_tolerance}\n")
 
     # Run planner
+    planning_start_time = time.perf_counter()
     path = rrt.plan()
+    planning_time = time.perf_counter() - planning_start_time
 
     if path is not None:
         print(f"\n Path found with {len(path)} waypoints!")
         print(f"Path length: {rrt.get_path_length():.2f}")
+        print(f"Planning time: {planning_time:.3f} seconds")
         print(f"Total nodes explored: {len(rrt.get_all_nodes())}\n")
 
         # Visualize all paths (success: blue, failure: red)
@@ -103,6 +107,7 @@ def main(seed: int = 42, save_image: bool = False) -> None:
 
     else:
         print("\nNo path found!")
+        print(f"Planning time: {planning_time:.3f} seconds")
         print("Try increasing max_iterations or decreasing obstacle count.")
 
     # Statistics
@@ -126,8 +131,6 @@ def main(seed: int = 42, save_image: bool = False) -> None:
     print("\nPress Ctrl+C to exit.")
     while True:
         try:
-            import time
-
             time.sleep(0.1)
         except KeyboardInterrupt:
             print("\nShutting down server.")
