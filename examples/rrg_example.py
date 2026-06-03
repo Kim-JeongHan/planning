@@ -7,7 +7,6 @@ import viser
 
 from planning.collision import ObstacleCollisionChecker
 from planning.map import Map
-from planning.sampling import GoalBiasedSampler  # , UniformSampler
 from planning.sampling.rrg import RRG, RRGConfig
 from planning.visualization import save_docs_image, setup_camera_top_view
 from planning.visualization.rrg_visualizer import RRGVisualizer
@@ -66,11 +65,10 @@ def main(seed: int = 42, save_image: bool = False) -> None:
         bounds=map_env.get_bounds(),
         collision_checker=collision_checker,
         config=RRGConfig(
-            sampler=GoalBiasedSampler,
             seed=seed,
             step_size=0.5,
             max_iterations=5000,
-            radius_gain=0.8,
+            radius_gain=2.5,
         ),
     )
 
@@ -87,7 +85,7 @@ def main(seed: int = 42, save_image: bool = False) -> None:
 
     if path is not None:
         print(f"\n Path found with {len(path)} waypoints!")
-        # print(f"Path length: {rrg.get_path_length():.2f}")
+        print(f"Path length: {rrg.get_path_length():.2f}")
         print(f"Total nodes in graph: {len(rrg.graph.nodes)}")
         print(f"Total edges in graph: {len(rrg.graph.edges)}\n")
 
@@ -113,6 +111,12 @@ def main(seed: int = 42, save_image: bool = False) -> None:
         print("Try increasing max_iterations or changing the seed.")
         # Visualize the graph even if no path is found
         visualizer.visualize_graph(rrg)
+
+    # Statistics
+    stats = rrg.get_stats()
+    print("\nStatistics:")
+    for key, value in stats.items():
+        print(f"  {key}: {value}")
 
     # Save image if requested
     if save_image:
