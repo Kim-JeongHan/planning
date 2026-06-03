@@ -3,22 +3,6 @@
 
 A Python 3D path planning library with visualization using Viser. Implements pathplanning algorithms with a unified architecture for easy extension and consistent visualization.
 
-
-## Features
-
-- 🚀 **Unified Architecture**: All planners extend `RRTBase` or `RRGBase` for consistency
-- 🎨 **Simple Visualization**: One API works for all planners - just pass the planner object
-- 🌳 **Multiple Algorithms**: RRT (single-tree), RRT-Connect (bidirectional), RRG (graph-based), RRT* (optimal), Informed RRT* (heuristic-guided optimal), PRM (multi-query), and PRM* (optimal multi-query)
-- 📊 **Detailed Analytics**: Track successful paths and failed collision attempts
-- 📐 **N-Dimensional**: Works with any dimensional state space (2D, 3D, 4D+)
-- 🎯 **Obstacle Avoidance**: Integrated collision detection with boxes and spheres
-- ⚡ **Asymptotic Optimality**: RRT*, Informed RRT*, RRG, and PRM* converge to optimal solutions
-- 🎯 **Informed Sampling**: Informed RRT* uses ellipsoidal heuristic for faster convergence
-- 🗺️ **Multi-Query Planning**: PRM and PRM* build reusable roadmaps for efficient path queries
-- 🎬 **Diffusion-based Planning**: Guided reverse-diffusion sampler with value-based trajectory guidance
-- 🔄 **Trajectory One-shot Inference**: Generate full collision-aware trajectories from start/goal constraints in one call
-- 🧭 **Metric-aware Sampling**: RRT-Connect, RRG, RRT*, and PRM* can share Euclidean or terrain Riemannian planning spaces
-
 ## Requirements
 
 - Python >= 3.10
@@ -61,7 +45,15 @@ Faster convergence using dual-tree bidirectional search.
 
 **Paper**: [Kuffner, J. J., & LaValle, S. M. (2000). "RRT-Connect: An efficient approach to single-query path planning"](https://www.cs.cmu.edu/afs/cs/academic/class/15494-s14/readings/kuffner_icra2000.pdf)
 
-<img src="docs/images/rrt_connect_example.png" alt="RRT-Connect Example" width="100%" height="100%"/>
+
+**Example comparison (seed 42, 30 mixed obstacles):**
+
+| RRT | RRT-Connect |
+| --- | --- |
+| <img src="docs/images/rrt_example2.png" alt="RRT Example" width="360" height="376"/> | <img src="docs/images/rrt_connect_example.png" alt="RRT-Connect Example" width="360" height="376"/> |
+| Single tree grows from the start.<br/>First goal at iteration : 403<br/>Path length : 27.04<br/>Planning time : 0.527 seconds<br/>Waypoints : 56<br/>Explored nodes : 319 | Two trees grow from start and goal, then connect.<br/>Trees connected at iteration : 14<br/>Path length : 25.39<br/>Planning time : 0.020 seconds<br/>Waypoints : 52<br/>Total nodes : 77 |
+
+RRT-Connect improves the time to first solution by growing two trees and repeatedly trying to connect them. It does not optimize the path like RRT*, but it can find a feasible connection much faster than single-tree RRT.
 
 **Features:**
 - Bidirectional search (start tree + goal tree)
@@ -81,7 +73,15 @@ An optimal sampling-based path planner that creates a graph structure to find in
 
 **Paper**: [Karaman, S., & Frazzoli, E. (2011). "Sampling-based algorithms for optimal motion planning"](https://arxiv.org/pdf/1105.1186)
 
-<img src="docs/images/rrg_example.png" alt="RRG Example" width="100%" height="100%"/>
+
+**Example comparison (seed 42, 15 mixed obstacles):**
+
+| RRT | RRG |
+| --- | --- |
+| <img src="docs/images/rrt_example.png" alt="RRT Example" width="360" height="376"/> | <img src="docs/images/rrg_example.png" alt="RRG Example" width="360" height="376"/> |
+| Single tree grows from the start.<br/>First goal at iteration : 264<br/>Path length : 27.21<br/>Waypoints : 56<br/>Explored nodes : 250 | Graph grows from the start.<br/>Goal reached at iteration : 264<br/>Path length : 24.19<br/>Waypoints : 34<br/>Graph nodes : 249<br/>Graph edges : 725 |
+
+RRG improves path-search structure rather than time to first solution. It keeps more collision-free connections than RRT, which gives the planner a graph to search for better routes. The tradeoff is more edge checks, more memory, and usually higher planning cost.
 
 **Features:**
 - Builds a graph to connect samples to multiple neighbors, enabling path optimization
@@ -101,7 +101,14 @@ An asymptotically optimal variant of RRT that rewires the tree to find shorter p
 
 **Paper**: [Karaman, S., & Frazzoli, E. (2011). "Sampling-based algorithms for optimal motion planning"](https://arxiv.org/pdf/1105.1186)
 
-<img src="docs/images/rrt_star_example.png" alt="RRT* Example" width="100%" height="100%"/>
+**Example comparison (seed 42):**
+
+| RRT | RRT* |
+| --- | --- |
+| <img src="docs/images/rrt_example.png" alt="RRT Example" width="360" height="376"/> | <img src="docs/images/rrt_star_example.png" alt="RRT* Example" width="360" height="376"/> |
+| Stops at the first feasible path.<br/>First goal at iteration : 264<br/>Path length : 27.21<br/>Waypoints : 56<br/>Explored nodes : 250 | Finds the first path, then continues optimizing.<br/>First goal at iteration : 264<br/>Optimized iterations : 2000<br/>Path length : 23.12<br/>Waypoints : 16<br/>Graph nodes : 1897 |
+
+RRT* uses rewiring and a larger connection radius (`radius_gain=5.0` in this example) to replace long local branches with lower-cost connections. The result is slower than RRT, but the final path is shorter and has fewer waypoints.
 
 **Features:**
 - Asymptotically optimal path planning (converges to optimal solution)
@@ -153,7 +160,14 @@ An asymptotically optimal variant of PRM that uses dynamic connection radius to 
 
 **Paper**: [Karaman, S., & Frazzoli, E. (2011). "Sampling-based algorithms for optimal motion planning"](https://arxiv.org/pdf/1105.1186)
 
-<img src="docs/images/prm_star_example.png" alt="PRM* Example" width="100%" height="100%"/>
+**Example comparison (seed 42, 15 mixed obstacles):**
+
+| PRM | PRM* |
+| --- | --- |
+| <img src="docs/images/prm_example.png" alt="PRM Example" width="360" height="376"/> | <img src="docs/images/prm_star_example.png" alt="PRM* Example" width="360" height="376"/> |
+| Fixed connection radius : 2.0<br/>Sample number : 300<br/>Path length : 28.64<br/>Waypoints : 20<br/>Roadmap nodes : 282<br/>Roadmap edges : 1178 | Dynamic radius gain : 10.0<br/>Sample number : 300<br/>Path length : 24.48<br/>Waypoints : 11<br/>Roadmap nodes : 282<br/>Roadmap edges : 2594 |
+
+PRM uses a fixed connection radius, while PRM* uses a radius that changes with the roadmap size. With a larger radius gain, PRM* finds a shorter path in this example, but it pays for that improvement with more roadmap edges and collision checks.
 
 **Features:**
 - **Asymptotic optimality**: Converges to the optimal path as samples increase
@@ -183,20 +197,23 @@ uv run python examples/prm_star_example.py
 
 ### 7. Informed RRT* - Comparison with RRT*
 
-Comparison of standard RRT* and its informed variant that uses heuristic sampling for faster convergence.
+Comparison of standard RRT* and its informed variant using the same seed, start/goal, obstacle map, max iterations, step size, and radius gain.
 
 | **RRT* (RRT-Star)** | **Informed RRT*** |
 |---------------------|-------------------|
-| <img src="docs/images/rrt_star_opt_example.png" alt="RRT* Example" width="100%"/> | <img src="docs/images/informed_rrt_star_example.png" alt="Informed RRT* Example" width="100%"/> |
+| <img src="docs/images/rrt_star_opt_example.png" alt="RRT* Example" width="360"/> | <img src="docs/images/informed_rrt_star_example.png" alt="Informed RRT* Example" width="360"/> |
+| Standard RRT* sampling with rewiring.<br/>First goal at iteration : 213<br/>Optimized iterations : 3000<br/>Path length : 11.01<br/>Planning time : 32 seconds<br/>Waypoints : 40<br/>Graph nodes : 2920<br/>Graph edges : 2919<br/>Goal candidates : 154 | Uses RRT* until a first solution exists, then samples inside the informed ellipsoid.<br/>Optimized iterations : 3000<br/>Path length : 11.01<br/>Planning time : 29 seconds<br/>Waypoints : 40<br/>Graph nodes : 2912<br/>Graph edges : 2911<br/>Goal candidates : 18 |
+
+In this run, Informed RRT* does not find a shorter final path than RRT*. Both planners converge to the same path length and waypoint count, while Informed RRT* finishes slightly faster because its post-solution sampling focuses on states that can still improve the current best path.
 
 #### What is Informed RRT*?
 
-An improved version of RRT* that uses informed sampling within an ellipsoidal subset of the state space, leading to faster convergence to optimal solutions.
+An improved version of RRT* that uses informed sampling within an ellipsoidal subset of the state space after a first solution is found. It can improve convergence speed in optimization-focused runs, but it does not guarantee a better path in every finite run.
 
 **Paper**: [Gammell, J. D., et al. (2014). "Informed RRT*: Optimal sampling-based path planning focused via direct sampling of an admissible ellipsoidal heuristic"](https://arxiv.org/pdf/1404.2334)
 
 **Features:**
-- **Faster convergence**: Focuses sampling on regions that can improve the solution
+- **Focused convergence**: Focuses sampling on regions that can improve the solution after a first path exists
 - **Ellipsoidal sampling**: After finding initial solution, samples only within prolate hyperspheroid defined by start, goal, and current best cost
 - **Asymptotic optimality**: Maintains optimality guarantee of RRT*
 - **Informed search**: Uses geometric heuristic to reject samples that cannot improve the path
@@ -214,7 +231,7 @@ An improved version of RRT* that uses informed sampling within an ellipsoidal su
 | Aspect | RRT* | Informed RRT* |
 |--------|------|---------------|
 | **Sampling Strategy** | Uniform sampling over entire space throughout planning | Uniform initially, then focused ellipsoidal sampling after first solution |
-| **Convergence Speed** | Slower - explores entire space | Faster - focuses on promising regions |
+| **Convergence Speed** | Explores the full space throughout planning | Can be faster after the first solution because sampling is focused |
 | **Optimality** | Asymptotically optimal | Asymptotically optimal (same guarantee) |
 | **When to Use** | Unknown environments, first solution priority | Known start/goal, optimization priority |
 

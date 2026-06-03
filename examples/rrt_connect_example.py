@@ -1,6 +1,7 @@
 """RRT-Connect algorithm example with obstacles."""
 
 import argparse
+import time
 
 import numpy as np
 import viser
@@ -36,13 +37,13 @@ def main(seed: int = 42, save_image: bool = False) -> None:
     print(" Generating random obstacles...")
     obstacles = map_env.generate_obstacles(
         server=server,
-        num_obstacles=40,
+        num_obstacles=30,
         min_size=0.5,
         max_size=2.5,
         seed=seed,
         color=(200, 100, 50),
         check_overlap=True,
-        obstacle_type="box",
+        obstacle_type="mixed",
     )
     print(f" Generated {len(obstacles)} obstacles\n")
 
@@ -61,14 +62,16 @@ def main(seed: int = 42, save_image: bool = False) -> None:
         bounds=map_env.get_bounds(),
         collision_checker=ObstacleCollisionChecker(map_env.obstacles),
         config=RRTConnectConfig(
-            max_iterations=5000,
+            max_iterations=2000,
             seed=seed,
         ),
     )
 
     # Plan path
     print(" Planning path with RRT-Connect...\n")
+    planning_start_time = time.perf_counter()
     path = rrt_connect.plan()
+    planning_time = time.perf_counter() - planning_start_time
 
     # Create visualizer
     visualizer = RRTConnectVisualizer(server)
@@ -77,6 +80,7 @@ def main(seed: int = 42, save_image: bool = False) -> None:
     if path is not None:
         print(f"\n Path found with {len(path)} waypoints!")
         print(f"Path length: {rrt_connect.get_path_length():.2f}")
+        print(f"Planning time: {planning_time:.3f} seconds")
         print(f"Total nodes explored: {len(rrt_connect.get_all_nodes())}\n")
 
         # Use visualize_branches for consistency with RRT visualizer
@@ -96,6 +100,7 @@ def main(seed: int = 42, save_image: bool = False) -> None:
 
     else:
         print("\n No path found!")
+        print(f"Planning time: {planning_time:.3f} seconds")
         print("Try increasing max_iterations or decreasing obstacle count.")
 
     # Statistics
@@ -119,8 +124,6 @@ def main(seed: int = 42, save_image: bool = False) -> None:
     print("\nPress Ctrl+C to exit.")
     while True:
         try:
-            import time
-
             time.sleep(0.1)
         except KeyboardInterrupt:
             print("\nShutting down server.")

@@ -119,6 +119,12 @@ def main(seed: int = 42, save_image: bool = False) -> None:
         # Visualize the roadmap even if no path is found
         visualizer.visualize_graph(prm)
 
+    # Statistics
+    stats = prm.get_stats()
+    print("\nStatistics:")
+    for key, value in stats.items():
+        print(f"  {key}: {value}")
+
     # Save image if requested
     if save_image:
 

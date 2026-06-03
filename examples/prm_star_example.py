@@ -70,7 +70,7 @@ def main(seed: int = 42, save_image: bool = False) -> None:
             seed=seed,
             step_size=0.1,
             sample_number=300,
-            radius_gain=5.0,
+            radius_gain=10.0,
             max_retries=5,
             goal_tolerance=0.5,
         ),
@@ -124,6 +124,12 @@ def main(seed: int = 42, save_image: bool = False) -> None:
         print("Try increasing sample_number, max_retries, or radius_gain.")
         # Visualize the roadmap even if no path is found
         visualizer.visualize_graph(prm_star)
+
+    # Statistics
+    stats = prm_star.get_stats()
+    print("\nStatistics:")
+    for key, value in stats.items():
+        print(f"  {key}: {value}")
 
     # Save image if requested
     if save_image:
